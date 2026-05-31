@@ -124,6 +124,17 @@ python -m train.train \
 
 Use `--disable_tqdm` for less noisy non-interactive cluster logs. If a job receives `SIGTERM` or `SIGINT`, training writes an emergency checkpoint and marks `progress.json` as `interrupted`.
 
+To print CUDA memory usage during training without changing the training loop:
+
+```bash
+python -m train.train \
+    --config configs/experiment_configs/llada_8b_instruct_dit_confidence_BL32_mixture.yaml \
+    --log_memory \
+    --memory_log_interval 50
+```
+
+Add `--reset_memory_peak_each_log` if you want each log line's peak values to cover only the interval since the previous memory log.
+
 ## Evaluation
 
 The recommended way to evaluate is using `eval.pipeline`, which handles checkpoint resolution, multi-seed evaluation, and result aggregation:
@@ -160,6 +171,12 @@ python -m eval.eval \
     --sampling_mode bernoulli-argmax \
     --output_dir ./eval_results/eval_policy_alpha_0.3_gsm8k_seed_42 \
     --resume auto
+```
+
+To include CUDA memory logs during evaluation, add:
+
+```bash
+    --log_memory --memory_log_interval 50
 ```
 
 Resume or skip completed sweep work with:

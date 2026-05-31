@@ -5,6 +5,9 @@ from pathlib import Path
 
 import torch
 
+from common.memory import format_cuda_memory
+from common.memory import get_cuda_memory_stats
+from common.memory import log_cuda_memory
 from common.run_state import ClusterStateCallback
 from common.run_state import append_jsonl
 from common.run_state import atomic_torch_save
@@ -158,3 +161,13 @@ def test_disable_tqdm_flag_is_available_in_eval_source():
     source = Path("eval/eval.py").read_text()
     assert "--disable_tqdm" in source
     assert "disable_tqdm=args.disable_tqdm" in source
+
+
+def test_cuda_memory_helpers_are_safe_without_cuda():
+    stats = get_cuda_memory_stats()
+    assert "cuda_available" in stats
+    assert "allocated_gb" in stats
+    formatted = format_cuda_memory("test")
+    assert "test" in formatted
+    returned = log_cuda_memory("test")
+    assert returned["cuda_available"] == stats["cuda_available"]

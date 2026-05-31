@@ -30,6 +30,7 @@ from trl import TrlParser
 
 from common.config import Config
 from common.generation.generation import generate_unified
+from common.memory import log_cuda_memory
 from common.models.policy import DiTHiddenStatePolicy
 from common.models.policy import DiTConfidencePolicy
 from common.models.policy import PolicyHFWrapper
@@ -122,6 +123,9 @@ def evaluate(
     alpha=None,
     seed=None,
     tqdm_position=0,
+    log_memory=False,
+    memory_log_interval=50,
+    reset_memory_peak_each_log=False,
 ):
     model.eval()
     total_processed = torch.tensor(0, device=model.device)
@@ -134,6 +138,9 @@ def evaluate(
     total_seen = len(completed_sample_ids)
     running_correct = 0
     running_nfe = []
+    memory_log_interval = max(1, int(memory_log_interval or 50))
+    first_memory_log_done = False
+    last_memory_log_count = len(completed_sample_ids)
 
     def make_sample_id(batch, index):
         if dataset_name == "humaneval":
@@ -342,6 +349,22 @@ def evaluate(
                     append_jsonl(output_jsonl, row)
             progress.update(len(rows_to_append))
             total_seen = len(completed_sample_ids)
+            if log_memory and (accelerator is None or accelerator.is_main_process):
+                should_log_memory = False
+                if rows_to_append and not first_memory_log_done:
+                    should_log_memory = True
+                    first_memory_log_done = True
+                elif total_seen - last_memory_log_count >= memory_log_interval:
+                    should_log_memory = True
+                if should_log_memory:
+                    log_cuda_memory(
+                        prefix=(
+                            f"eval dataset={dataset_name} sampler={remasking} "
+                            f"sample={total_seen}"
+                        ),
+                        reset_peak=reset_memory_peak_each_log,
+                    )
+                    last_memory_log_count = total_seen
             mean_nfe = sum(running_nfe) / len(running_nfe) if running_nfe else None
             progress.set_postfix(sample=total_seen, mean_nfe=mean_nfe)
             if progress_dir and (accelerator is None or accelerator.is_main_process):
@@ -387,6 +410,11 @@ def evaluate(
                     print(f"Ground truth: {gt_answers[idx]}")
 
         progress.close()
+    if log_memory and (accelerator is None or accelerator.is_main_process):
+        log_cuda_memory(
+            prefix=f"eval end dataset={dataset_name} sampler={remasking}",
+            reset_peak=reset_memory_peak_each_log,
+        )
     avg_wall_time = sum(wall_times) / len(wall_times) if wall_times else 0.0
     metrics = {
         "wall_time": avg_wall_time,
@@ -574,6 +602,9 @@ if __name__ == "__main__":
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument("--disable_tqdm", action="store_true")
     parser.add_argument("--tqdm_position", type=int, default=0)
+    parser.add_argument("--log_memory", action="store_true")
+    parser.add_argument("--memory_log_interval", type=int, default=50)
+    parser.add_argument("--reset_memory_peak_each_log", action="store_true")
     parser.add_argument(
         "--sampling_mode",
         type=str,
@@ -691,6 +722,11 @@ if __name__ == "__main__":
         trust_remote_code=True,
         torch_dtype=torch.bfloat16,
     )
+    if args.log_memory:
+        log_cuda_memory(
+            prefix="eval after model loading",
+            reset_peak=args.reset_memory_peak_each_log,
+        )
     tokenizer = AutoTokenizer.from_pretrained(args.model_path, trust_remote_code=True)
 
     if "LLaDA" in args.model_path:
@@ -745,6 +781,16 @@ if __name__ == "__main__":
                 print(f"Loading policy from {args.policy_path}")
             state = load_file(args.policy_path)
             policy.load_state_dict(state)
+        if args.log_memory and accelerator.is_main_process:
+            log_cuda_memory(
+                prefix="eval after policy loading",
+                reset_peak=args.reset_memory_peak_each_log,
+            )
+    elif args.log_memory and accelerator.is_main_process:
+        log_cuda_memory(
+            prefix="eval after sampler setup",
+            reset_peak=args.reset_memory_peak_each_log,
+        )
 
     # Create the dataset
     dataset_kwargs = {
@@ -807,6 +853,9 @@ if __name__ == "__main__":
         alpha=args.grpo_config.alpha_compute_reward,
         seed=args.seed,
         tqdm_position=args.tqdm_position,
+        log_memory=args.log_memory,
+        memory_log_interval=args.memory_log_interval,
+        reset_memory_peak_each_log=args.reset_memory_peak_each_log,
     )
 
     if accelerator.num_processes > 1:

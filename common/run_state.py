@@ -24,6 +24,9 @@ from transformers import TrainerControl
 from transformers import TrainerState
 from transformers import TrainingArguments
 
+from common.memory import get_cuda_memory_stats
+from common.memory import log_cuda_memory
+
 
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -324,6 +327,15 @@ class ClusterStateCallback(TrainerCallback):
             return None
         return min(1.0, state.global_step / total)
 
+    def _memory_enabled(self) -> bool:
+        return bool(getattr(self.config, "log_memory", False))
+
+    def _memory_interval(self) -> int:
+        return max(1, int(getattr(self.config, "memory_log_interval", 50) or 50))
+
+    def _reset_peak(self) -> bool:
+        return bool(getattr(self.config, "reset_memory_peak_each_log", False))
+
     def on_train_begin(
         self,
         args: TrainingArguments,
@@ -363,6 +375,8 @@ class ClusterStateCallback(TrainerCallback):
                 if isinstance(v, (int, float, str)) or hasattr(v, "item")
             }
         )
+        if self._memory_enabled():
+            self.latest_metrics["memory"] = get_cuda_memory_stats(reset_peak=False)
         row = {
             "step": state.global_step,
             "epoch": state.epoch,
@@ -386,6 +400,36 @@ class ClusterStateCallback(TrainerCallback):
             latest_metrics=self.latest_metrics,
         )
 
+    def on_step_end(
+        self,
+        args: TrainingArguments,
+        state: TrainerState,
+        control: TrainerControl,
+        **kwargs,
+    ):
+        if not state.is_world_process_zero or not self._memory_enabled():
+            return
+        step = state.global_step
+        if step != 1 and step % self._memory_interval() != 0:
+            return
+        stats = log_cuda_memory(
+            prefix=f"train step={step}",
+            reset_peak=self._reset_peak(),
+        )
+        self.latest_metrics["memory"] = stats
+        write_progress(
+            self.run_dir,
+            "running",
+            alpha=getattr(self.config, "alpha_compute_reward", None),
+            seed=getattr(self.config, "seed", None),
+            epoch=state.epoch,
+            global_step=step,
+            total_steps=self._total_steps(state),
+            completed_fraction=self._completed_fraction(state),
+            last_checkpoint=self.last_checkpoint,
+            latest_metrics=self.latest_metrics,
+        )
+
     def on_save(
         self,
         args: TrainingArguments,
@@ -395,6 +439,11 @@ class ClusterStateCallback(TrainerCallback):
     ):
         if not state.is_world_process_zero:
             return
+        if self._memory_enabled():
+            self.latest_metrics["memory"] = log_cuda_memory(
+                prefix=f"train before checkpoint step={state.global_step}",
+                reset_peak=self._reset_peak(),
+            )
         hf_checkpoint = kwargs.get("hf_checkpoint_path") or (
             Path(args.output_dir) / f"checkpoint-{state.global_step}"
         )
@@ -443,6 +492,11 @@ class ClusterStateCallback(TrainerCallback):
     ):
         if not state.is_world_process_zero:
             return
+        if self._memory_enabled():
+            self.latest_metrics["memory"] = log_cuda_memory(
+                prefix=f"train end step={state.global_step}",
+                reset_peak=self._reset_peak(),
+            )
         write_progress(
             self.run_dir,
             "completed",

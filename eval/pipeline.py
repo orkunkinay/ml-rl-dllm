@@ -34,6 +34,9 @@ class EvalConfig:
     n_test: int | None
     resume: str | None
     disable_tqdm: bool
+    log_memory: bool
+    memory_log_interval: int
+    reset_memory_peak_each_log: bool
 
 
 def get_s3() -> s3fs.S3FileSystem:
@@ -175,6 +178,11 @@ def run_eval(
             cmd.extend(["--resume", cfg.resume])
         if cfg.disable_tqdm:
             cmd.append("--disable_tqdm")
+        if cfg.log_memory:
+            cmd.append("--log_memory")
+        if cfg.reset_memory_peak_each_log:
+            cmd.append("--reset_memory_peak_each_log")
+        cmd.extend(["--memory_log_interval", str(cfg.memory_log_interval)])
         if cfg.sampling_mode:
             cmd.extend(["--sampling_mode", cfg.sampling_mode])
         if cfg.block_length:
@@ -274,6 +282,9 @@ def main():
     parser.add_argument("--n_test", type=int, default=None)
     parser.add_argument("--resume", default="auto")
     parser.add_argument("--disable_tqdm", action="store_true")
+    parser.add_argument("--log_memory", action="store_true")
+    parser.add_argument("--memory_log_interval", type=int, default=50)
+    parser.add_argument("--reset_memory_peak_each_log", action="store_true")
     parser.add_argument("--no_aggregate", action="store_true")
     args = parser.parse_args()
 
@@ -306,6 +317,9 @@ def main():
             n_test=args.n_test,
             resume=args.resume,
             disable_tqdm=args.disable_tqdm,
+            log_memory=args.log_memory,
+            memory_log_interval=args.memory_log_interval,
+            reset_memory_peak_each_log=args.reset_memory_peak_each_log,
         )
         try:
             run_names.append(run_pipeline(cfg))

@@ -24,6 +24,7 @@ from trl import TrlParser
 
 import train.reward_func as reward_func
 from common.config import Config
+from common.memory import log_cuda_memory
 from common.models.policy import DiTHiddenStatePolicy
 from common.models.policy import DiTConfidencePolicy
 from common.models.policy import PolicyHFWrapper
@@ -176,6 +177,12 @@ def main(grpo_config, model_config):
     else:
         raise ValueError(f"Model path {grpo_config.model_path} not supported")
 
+    if grpo_config.log_memory:
+        log_cuda_memory(
+            prefix="train after model loading",
+            reset_peak=grpo_config.reset_memory_peak_each_log,
+        )
+
     tokenizer = AutoTokenizer.from_pretrained(
         grpo_config.model_path, trust_remote_code=True
     )
@@ -217,6 +224,12 @@ def main(grpo_config, model_config):
         )
 
     policy = PolicyHFWrapper(policy_core, grpo_config.policy_type)
+
+    if grpo_config.log_memory:
+        log_cuda_memory(
+            prefix="train after policy loading",
+            reset_peak=grpo_config.reset_memory_peak_each_log,
+        )
 
     # Log policy parameter count
     total_params = sum(p.numel() for p in policy_core.parameters())

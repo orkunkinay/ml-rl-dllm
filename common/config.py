@@ -220,3 +220,15 @@ class Config(GRPOConfig):
         default=0,
         metadata={"help": "Base tqdm position for nested progress bars."},
     )
+    log_memory: bool = field(
+        default=False,
+        metadata={"help": "Log CUDA memory at low-noise training checkpoints."},
+    )
+    memory_log_interval: int = field(
+        default=50,
+        metadata={"help": "Training step interval for CUDA memory logging."},
+    )
+    reset_memory_peak_each_log: bool = field(
+        default=False,
+        metadata={"help": "Reset CUDA peak memory counters after each memory log."},
+    )

@@ -33,6 +33,7 @@ from trl.trainer.grpo_trainer import GRPOTrainer
 from trl.trainer.utils import print_prompt_completions_sample
 
 from common.generation.generation import generate_unified
+from common.memory import log_cuda_memory
 from common.generation.sampling import bernoulli_batch_loglik
 from common.generation.sampling import dpls_batch_loglik
 from common.run_state import ClusterStateCallback
@@ -107,6 +108,7 @@ class Trainer(GRPOTrainer):
         self.train_reward_best = -float("inf")
         self.train_reward_best_step = 0
         self.effective_steps = 0
+        self._memory_logged_first_rollout = False
         self.s3_callback = None
         for callback in callbacks:
             if isinstance(callback, S3UploadCallback):
@@ -478,6 +480,14 @@ class Trainer(GRPOTrainer):
         self, inputs: dict[str, Union[torch.Tensor, Any]]
     ) -> dict[str, Union[torch.Tensor, Any]]:
         device = self.accelerator.device
+        should_log_first_rollout_memory = (
+            self.args.log_memory and not self._memory_logged_first_rollout
+        )
+        if should_log_first_rollout_memory and self.accelerator.is_main_process:
+            log_cuda_memory(
+                prefix=f"train before first rollout step={self.state.global_step}",
+                reset_peak=self.args.reset_memory_peak_each_log,
+            )
 
         prompts = [x["prompt"] for x in inputs]
 
@@ -653,6 +663,14 @@ class Trainer(GRPOTrainer):
                 prompt_completion_ids = torch.cat(prompt_completion_ids_all, dim=0)
                 num_steps = torch.cat(num_steps_all, dim=0)
                 still_masked = torch.cat(still_masked_all, dim=0)
+
+        if should_log_first_rollout_memory:
+            self._memory_logged_first_rollout = True
+            if self.accelerator.is_main_process:
+                log_cuda_memory(
+                    prefix=f"train after first rollout step={self.state.global_step}",
+                    reset_peak=self.args.reset_memory_peak_each_log,
+                )
 
         # Compute prompt length and extract completion ids
         prompt_length = prompt_ids.size(1)
