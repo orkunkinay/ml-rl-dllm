@@ -7,7 +7,7 @@
 #SBATCH --mem=32G
 #SBATCH --gres=gpu:1
 
-cd ~/msc_project/repo-name
+cd ~/msc_project/ml-rl-dllm
 source .venv/bin/activate
 
 module add cuda
