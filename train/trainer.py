@@ -115,6 +115,16 @@ class Trainer(GRPOTrainer):
                 self.s3_callback = callback
                 break
 
+    def _invoke_cluster_callback(self, method_name: str, **kwargs):
+        for callback in self.callback_handler.callbacks:
+            if isinstance(callback, ClusterStateCallback):
+                getattr(callback, method_name)(
+                    self.args,
+                    self.state,
+                    self.control,
+                    **kwargs,
+                )
+
     def train(self, *args, **kwargs):
         """Override train to save final checkpoint at end of training."""
         output = super().train(*args, **kwargs)
@@ -129,18 +139,14 @@ class Trainer(GRPOTrainer):
             unwrapped_model = self.accelerator.unwrap_model(self.model_wrapped)
             unwrapped_model.save_pretrained(checkpoint_dir)
             self.state.save_to_json(os.path.join(checkpoint_dir, "trainer_state.json"))
-            for callback in self.callback_handler.callbacks:
-                if isinstance(callback, ClusterStateCallback):
-                    callback.on_save(
-                        self.args,
-                        self.state,
-                        self.control,
-                        model=unwrapped_model,
-                        optimizer=self.optimizer,
-                        lr_scheduler=self.lr_scheduler,
-                        scaler=getattr(self, "scaler", None),
-                    )
-                    callback.on_train_end(self.args, self.state, self.control)
+            self._invoke_cluster_callback(
+                "on_save",
+                model=unwrapped_model,
+                optimizer=self.optimizer,
+                lr_scheduler=self.lr_scheduler,
+                scaler=getattr(self, "scaler", None),
+            )
+            self._invoke_cluster_callback("on_train_end")
 
             if self.s3_callback is not None:
                 print(
@@ -925,20 +931,16 @@ class Trainer(GRPOTrainer):
                 print(
                     f"Saved checkpoint-best at step {self.train_reward_best_step} with train reward {self.train_reward_best}"
                 )
-                for callback in self.callback_handler.callbacks:
-                    if isinstance(callback, ClusterStateCallback):
-                        callback.on_save(
-                            self.args,
-                            self.state,
-                            self.control,
-                            model=unwrapped_model,
-                            optimizer=self.optimizer,
-                            lr_scheduler=self.lr_scheduler,
-                            scaler=getattr(self, "scaler", None),
-                            hf_checkpoint_path=_output_dir,
-                            alias_name="checkpoint_best.pt",
-                            update_latest=False,
-                        )
+                self._invoke_cluster_callback(
+                    "on_save",
+                    model=unwrapped_model,
+                    optimizer=self.optimizer,
+                    lr_scheduler=self.lr_scheduler,
+                    scaler=getattr(self, "scaler", None),
+                    hf_checkpoint_path=_output_dir,
+                    alias_name="checkpoint_best.pt",
+                    update_latest=False,
+                )
                 if self.s3_callback is not None:
                     # use the callback to push the checkpoint to s3
                     print(f"Uploading checkpoint-best to s3: {self.args.output_dir}")

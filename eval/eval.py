@@ -11,6 +11,7 @@ import random
 import re
 import signal
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -67,6 +68,24 @@ FEW_SHOT_DEFAULTS = {
     "humaneval": 0,
     "mbpp": 3,
 }
+
+
+def build_generation_result_path(
+    args: argparse.Namespace, model_name: str, extension: str
+) -> Path:
+    filename_parts = [
+        args.dataset,
+        model_name,
+        args.gen_length,
+        args.diffusion_steps,
+        args.block_length,
+        args.remasking,
+        0,  # for legacy reasons we include the rank of the process
+        "generations",
+    ]
+    return Path(args.output_dir) / (
+        "_".join(map(str, filename_parts)) + extension
+    )
 
 
 def init_seed(seed):
@@ -134,7 +153,7 @@ def evaluate(
     device = model.device
 
     is_code_dataset = dataset_name in ["humaneval", "mbpp"]
-    completed_sample_ids = completed_sample_ids or set()
+    completed_sample_ids = set(completed_sample_ids or set())
     total_seen = len(completed_sample_ids)
     running_correct = 0
     running_nfe = []
@@ -142,274 +161,295 @@ def evaluate(
     first_memory_log_done = False
     last_memory_log_count = len(completed_sample_ids)
 
-    def make_sample_id(batch, index):
+    def make_sample_id(batch, batch_index, index):
         if dataset_name == "humaneval":
             return str(batch["task_ids"][index])
         if dataset_name == "mbpp":
             return str(batch["task_ids"][index])
         if "questions" in batch:
             return f"{dataset_name}:{batch['questions'][index]}"
-        return f"{dataset_name}:{total_seen + index}"
+        return f"{dataset_name}:batch_{batch_index}:item_{index}"
+
+    def progress_total():
+        sampler = getattr(dataloader, "sampler", None)
+        if sampler is not None and hasattr(sampler, "num_samples"):
+            return sampler.num_samples
+        if sampler is not None:
+            try:
+                return len(sampler)
+            except TypeError:
+                pass
+        if hasattr(dataloader, "dataset"):
+            return len(dataloader.dataset)
+        return None
 
     with torch.no_grad():
+        total_for_progress = progress_total()
+        progress_initial = (
+            0
+            if accelerator is not None and accelerator.num_processes > 1
+            else min(len(completed_sample_ids), total_for_progress or 0)
+        )
         progress = tqdm(
-            total=len(dataloader.dataset) if hasattr(dataloader, "dataset") else None,
+            total=total_for_progress,
             disable=disable_tqdm
             or (not accelerator.is_main_process if accelerator else False),
             dynamic_ncols=True,
             position=tqdm_position,
-            initial=len(completed_sample_ids),
+            initial=progress_initial,
             desc=f"dataset={dataset_name} sampler={remasking} alpha={alpha}",
         )
-        for batch in dataloader:
-            batch_sample_ids = [
-                make_sample_id(batch, j) for j in range(len(batch["prompts"]))
-            ]
-            if batch_sample_ids and all(
-                sid in completed_sample_ids for sid in batch_sample_ids
-            ):
-                continue
-            start_time = time.time()
-            input_ids = batch["input_ids"].to(device)
-
-            attn_masks = batch["attention_mask"].bool().to(device)
-            prompts = batch["prompts"]
-
-            if is_code_dataset:
-                if dataset_name == "humaneval":
-                    raw_prompts = batch["raw_prompts"]
-                    task_ids = batch["task_ids"]
-                    test_cases = batch["test_cases"]
-                    entry_points = batch["entry_points"]
-                elif dataset_name == "mbpp":
-                    raw_prompts = batch["texts"]
-                    task_ids = batch["task_ids"]
-                    test_cases = batch["test_cases"]
-                    entry_points = [None] * len(task_ids)
-            else:
-                gt_answers = batch["answers"]
-                questions = batch["questions"]
-
-            gen_kwargs = {
-                "model": model,
-                "prompt": input_ids,
-                "remasking": remasking,
-                "gen_length": gen_length,
-                "block_length": block_length,
-                "temperature": temperature,
-                "mask_id": mask_id,
-                "model_type": model_type,
-                "attention_mask": attn_masks,
-            }
-
-            if remasking == "policy":
-                if policy is None:
-                    raise ValueError(
-                        "policy remasking requires a policy to be provided"
-                    )
-                gen_kwargs.update(
-                    {
-                        "policy": policy,
-                        "sampling_mode": sampling_mode,
-                        "dpls_stop_logit": dpls_stop_logit,
-                        "temperature_policy": temperature_policy,
-                        "full_context": policy_full_context,
-                        "confidences_top_p": confidences_top_p,
-                    }
-                )
-            elif remasking == "fastdllm":
-                gen_kwargs["thres"] = thres
-            else:
-                gen_kwargs["steps"] = steps
-
-            result = generate_unified(**gen_kwargs)
-            out = result.sequences
-
-            if remasking == "policy":
-                steps_taken = result.steps_taken.tolist()
-            elif remasking == "fastdllm":
-                steps_taken = [result.steps_taken.item()]
-            else:
-                steps_taken = [result.steps_taken.item()] * len(input_ids)
-
-            generated_texts = tokenizer.batch_decode(
-                out[:, -gen_length:], skip_special_tokens=True
-            )
-
-            batch_wall_time = time.time() - start_time
-            wall_time_per_sample = batch_wall_time / len(generated_texts)
-
-            if is_code_dataset:
-                sanitized_completions = []
-                for j, gen_text in enumerate(generated_texts):
-                    if dataset_name == "humaneval":
-                        try:
-                            full_completion = raw_prompts[j] + gen_text
-                            sanitized = sanitize_humaneval(
-                                full_completion, entry_points[j]
-                            )
-                            sanitized_completions.append(sanitized)
-                        except Exception as e:
-                            print(
-                                f"Warning: Failed to sanitize HumanEval completion for {task_ids[j]}: {e}"
-                            )
-                            # for HumanEval, fall back to just doing prompt + generation
-                            sanitized_completions.append(raw_prompts[j] + gen_text)
-                    elif dataset_name == "mbpp":
-                        try:
-                            sanitized = sanitize_mbpp(gen_text)
-                            sanitized_completions.append(sanitized)
-                        except Exception as e:
-                            print(
-                                f"Warning: Failed to sanitize MBPP completion for {task_ids[j]}: {e}"
-                            )
-                            # for MBPP, fall back to just doing the generation
-                            sanitized_completions.append(gen_text)
-
-                example_result = [
-                    {
-                        "task_id": task_ids[j],
-                        "prompt": raw_prompts[j],
-                        "prompt_input": prompts[j],
-                        "generation_raw": generated_texts[j],
-                        "generation_sanitized": sanitized_completions[j],
-                        "test_cases": test_cases[j],
-                        "entry_point": entry_points[j],
-                        "steps": steps_taken[j].item()
-                        if hasattr(steps_taken[j], "item")
-                        else steps_taken[j],
-                        "wall_time": wall_time_per_sample,
-                    }
-                    for j in range(len(task_ids))
+        try:
+            for batch_index, batch in enumerate(dataloader):
+                batch_sample_ids = [
+                    make_sample_id(batch, batch_index, j)
+                    for j in range(len(batch["prompts"]))
                 ]
-
-            else:
-                example_result = [
-                    {
-                        "question": questions[j],
-                        "prompt_input": prompts[j],
-                        "generations": generated_texts[j],
-                        "ground_truth": gt_answers[j].item()
-                        if hasattr(gt_answers[j], "item")
-                        else gt_answers[j],
-                        "steps": steps_taken[j].item()
-                        if hasattr(steps_taken[j], "item")
-                        else steps_taken[j],
-                        "wall_time": wall_time_per_sample,
-                    }
-                    for j in range(len(gt_answers))
-                ]
-            all_generations.extend(example_result)
-            total_processed += len(generated_texts)
-            wall_times.append(batch_wall_time)
-            rows_to_append = []
-            for j, item in enumerate(example_result):
-                sample_id = batch_sample_ids[j]
-                if sample_id in completed_sample_ids:
+                if batch_sample_ids and all(
+                    sid in completed_sample_ids for sid in batch_sample_ids
+                ):
                     continue
-                if is_code_dataset:
-                    prediction = item["generation_sanitized"]
-                    answer = item["test_cases"]
-                    prompt = item["prompt"]
-                    nfe = item["steps"]
-                else:
-                    prediction = item["generations"]
-                    answer = item["ground_truth"]
-                    prompt = item["prompt_input"]
-                    nfe = item["steps"]
-                correct = None
-                if dataset_name == "gsm8k":
-                    correct = check_gsm_correct(extract_gsm_answer(prediction), answer)
-                elif dataset_name == "math":
-                    correct = check_math_correct(
-                        extract_math_answer(prediction), answer
-                    )
-                if correct is True:
-                    running_correct += 1
-                row = {
-                    "sample_id": sample_id,
-                    "prompt": prompt,
-                    "prediction": prediction,
-                    "answer": answer,
-                    "correct": correct,
-                    "nfe": nfe,
-                    "sampler": remasking,
-                    "alpha": alpha,
-                    "seed": seed,
-                    "dataset": dataset_name,
-                    "raw_result": item,
-                }
-                rows_to_append.append(row)
-                completed_sample_ids.add(sample_id)
-                running_nfe.append(float(nfe))
-            if output_jsonl is not None and (
-                accelerator is None or accelerator.is_main_process
-            ):
-                for row in rows_to_append:
-                    append_jsonl(output_jsonl, row)
-            progress.update(len(rows_to_append))
-            total_seen = len(completed_sample_ids)
-            if log_memory and (accelerator is None or accelerator.is_main_process):
-                should_log_memory = False
-                if rows_to_append and not first_memory_log_done:
-                    should_log_memory = True
-                    first_memory_log_done = True
-                elif total_seen - last_memory_log_count >= memory_log_interval:
-                    should_log_memory = True
-                if should_log_memory:
-                    log_cuda_memory(
-                        prefix=(
-                            f"eval dataset={dataset_name} sampler={remasking} "
-                            f"sample={total_seen}"
-                        ),
-                        reset_peak=reset_memory_peak_each_log,
-                    )
-                    last_memory_log_count = total_seen
-            mean_nfe = sum(running_nfe) / len(running_nfe) if running_nfe else None
-            progress.set_postfix(sample=total_seen, mean_nfe=mean_nfe)
-            if progress_dir and (accelerator is None or accelerator.is_main_process):
-                write_progress(
-                    progress_dir,
-                    "running",
-                    alpha=alpha,
-                    seed=seed,
-                    global_step=total_seen,
-                    total_steps=len(dataloader.dataset)
-                    if hasattr(dataloader, "dataset")
-                    else None,
-                    completed_fraction=(
-                        total_seen / len(dataloader.dataset)
-                        if hasattr(dataloader, "dataset") and len(dataloader.dataset)
-                        else None
-                    ),
-                    latest_metrics={"mean_nfe": mean_nfe, "correct": running_correct},
-                    extra={"dataset": dataset_name, "sampler": remasking},
-                )
+                start_time = time.time()
+                input_ids = batch["input_ids"].to(device)
+                attn_masks = batch["attention_mask"].bool().to(device)
+                prompts = batch["prompts"]
 
-            if accelerator and accelerator.is_main_process:
-                idx = random.randint(0, len(prompts) - 1)
                 if is_code_dataset:
                     if dataset_name == "humaneval":
-                        print(f"Task ID: {task_ids[idx]}")
-                        print("-" * 50)
-                        print("Generation (sanitized):")
-                        print(sanitized_completions[idx])
-                        print("-" * 50)
+                        raw_prompts = batch["raw_prompts"]
+                        task_ids = batch["task_ids"]
+                        test_cases = batch["test_cases"]
+                        entry_points = batch["entry_points"]
                     elif dataset_name == "mbpp":
-                        print(f"Task: {raw_prompts[idx]}")
-                        print("-" * 50)
-                        print("Generation (sanitized):")
-                        print(sanitized_completions[idx])
-                        print("-" * 50)
+                        raw_prompts = batch["texts"]
+                        task_ids = batch["task_ids"]
+                        test_cases = batch["test_cases"]
+                        entry_points = [None] * len(task_ids)
                 else:
-                    print(f"Question: {questions[idx]}")
-                    print("-" * 50)
-                    print("Generation:")
-                    print(generated_texts[idx])
-                    print("-" * 50)
-                    print(f"Ground truth: {gt_answers[idx]}")
+                    gt_answers = batch["answers"]
+                    questions = batch["questions"]
 
-        progress.close()
+                gen_kwargs = {
+                    "model": model,
+                    "prompt": input_ids,
+                    "remasking": remasking,
+                    "gen_length": gen_length,
+                    "block_length": block_length,
+                    "temperature": temperature,
+                    "mask_id": mask_id,
+                    "model_type": model_type,
+                    "attention_mask": attn_masks,
+                }
+
+                if remasking == "policy":
+                    if policy is None:
+                        raise ValueError(
+                            "policy remasking requires a policy to be provided"
+                        )
+                    gen_kwargs.update(
+                        {
+                            "policy": policy,
+                            "sampling_mode": sampling_mode,
+                            "dpls_stop_logit": dpls_stop_logit,
+                            "temperature_policy": temperature_policy,
+                            "full_context": policy_full_context,
+                            "confidences_top_p": confidences_top_p,
+                        }
+                    )
+                elif remasking == "fastdllm":
+                    gen_kwargs["thres"] = thres
+                else:
+                    gen_kwargs["steps"] = steps
+
+                result = generate_unified(**gen_kwargs)
+                out = result.sequences
+
+                if remasking == "policy":
+                    steps_taken = result.steps_taken.tolist()
+                elif remasking == "fastdllm":
+                    steps_taken = [result.steps_taken.item()]
+                else:
+                    steps_taken = [result.steps_taken.item()] * len(input_ids)
+
+                generated_texts = tokenizer.batch_decode(
+                    out[:, -gen_length:], skip_special_tokens=True
+                )
+
+                batch_wall_time = time.time() - start_time
+                wall_time_per_sample = batch_wall_time / len(generated_texts)
+
+                if is_code_dataset:
+                    sanitized_completions = []
+                    for j, gen_text in enumerate(generated_texts):
+                        if dataset_name == "humaneval":
+                            try:
+                                full_completion = raw_prompts[j] + gen_text
+                                sanitized = sanitize_humaneval(
+                                    full_completion, entry_points[j]
+                                )
+                                sanitized_completions.append(sanitized)
+                            except Exception as e:
+                                print(
+                                    f"Warning: Failed to sanitize HumanEval completion for {task_ids[j]}: {e}"
+                                )
+                                sanitized_completions.append(raw_prompts[j] + gen_text)
+                        elif dataset_name == "mbpp":
+                            try:
+                                sanitized = sanitize_mbpp(gen_text)
+                                sanitized_completions.append(sanitized)
+                            except Exception as e:
+                                print(
+                                    f"Warning: Failed to sanitize MBPP completion for {task_ids[j]}: {e}"
+                                )
+                                sanitized_completions.append(gen_text)
+
+                    example_result = [
+                        {
+                            "task_id": task_ids[j],
+                            "prompt": raw_prompts[j],
+                            "prompt_input": prompts[j],
+                            "generation_raw": generated_texts[j],
+                            "generation_sanitized": sanitized_completions[j],
+                            "test_cases": test_cases[j],
+                            "entry_point": entry_points[j],
+                            "steps": steps_taken[j].item()
+                            if hasattr(steps_taken[j], "item")
+                            else steps_taken[j],
+                            "wall_time": wall_time_per_sample,
+                        }
+                        for j in range(len(task_ids))
+                    ]
+                else:
+                    example_result = [
+                        {
+                            "question": questions[j],
+                            "prompt_input": prompts[j],
+                            "generations": generated_texts[j],
+                            "ground_truth": gt_answers[j].item()
+                            if hasattr(gt_answers[j], "item")
+                            else gt_answers[j],
+                            "steps": steps_taken[j].item()
+                            if hasattr(steps_taken[j], "item")
+                            else steps_taken[j],
+                            "wall_time": wall_time_per_sample,
+                        }
+                        for j in range(len(gt_answers))
+                    ]
+
+                all_generations.extend(example_result)
+                total_processed += len(generated_texts)
+                wall_times.append(batch_wall_time)
+                rows_to_append = []
+                for j, item in enumerate(example_result):
+                    sample_id = batch_sample_ids[j]
+                    if sample_id in completed_sample_ids:
+                        continue
+                    if is_code_dataset:
+                        prediction = item["generation_sanitized"]
+                        answer = item["test_cases"]
+                        prompt = item["prompt"]
+                        nfe = item["steps"]
+                    else:
+                        prediction = item["generations"]
+                        answer = item["ground_truth"]
+                        prompt = item["prompt_input"]
+                        nfe = item["steps"]
+                    correct = None
+                    if dataset_name == "gsm8k":
+                        correct = check_gsm_correct(
+                            extract_gsm_answer(prediction), answer
+                        )
+                    elif dataset_name == "math":
+                        correct = check_math_correct(
+                            extract_math_answer(prediction), answer
+                        )
+                    if correct is True:
+                        running_correct += 1
+                    row = {
+                        "sample_id": sample_id,
+                        "prompt": prompt,
+                        "prediction": prediction,
+                        "answer": answer,
+                        "correct": correct,
+                        "nfe": nfe,
+                        "sampler": remasking,
+                        "alpha": alpha,
+                        "seed": seed,
+                        "dataset": dataset_name,
+                        "raw_result": item,
+                    }
+                    rows_to_append.append(row)
+                    completed_sample_ids.add(sample_id)
+                    running_nfe.append(float(nfe))
+                if output_jsonl is not None and (
+                    accelerator is None or accelerator.is_main_process
+                ):
+                    for row in rows_to_append:
+                        append_jsonl(output_jsonl, row)
+                progress.update(len(rows_to_append))
+                total_seen = len(completed_sample_ids)
+                if log_memory and (accelerator is None or accelerator.is_main_process):
+                    should_log_memory = False
+                    if rows_to_append and not first_memory_log_done:
+                        should_log_memory = True
+                        first_memory_log_done = True
+                    elif total_seen - last_memory_log_count >= memory_log_interval:
+                        should_log_memory = True
+                    if should_log_memory:
+                        log_cuda_memory(
+                            prefix=(
+                                f"eval dataset={dataset_name} sampler={remasking} "
+                                f"sample={total_seen}"
+                            ),
+                            reset_peak=reset_memory_peak_each_log,
+                        )
+                        last_memory_log_count = total_seen
+                mean_nfe = sum(running_nfe) / len(running_nfe) if running_nfe else None
+                progress.set_postfix(sample=total_seen, mean_nfe=mean_nfe)
+                if progress_dir and (accelerator is None or accelerator.is_main_process):
+                    write_progress(
+                        progress_dir,
+                        "running",
+                        alpha=alpha,
+                        seed=seed,
+                        global_step=total_seen,
+                        total_steps=total_for_progress,
+                        completed_fraction=(
+                            total_seen / total_for_progress
+                            if total_for_progress
+                            else None
+                        ),
+                        latest_metrics={
+                            "mean_nfe": mean_nfe,
+                            "correct": running_correct,
+                        },
+                        extra={"dataset": dataset_name, "sampler": remasking},
+                    )
+
+                if accelerator and accelerator.is_main_process:
+                    idx = random.randint(0, len(prompts) - 1)
+                    if is_code_dataset:
+                        if dataset_name == "humaneval":
+                            print(f"Task ID: {task_ids[idx]}")
+                            print("-" * 50)
+                            print("Generation (sanitized):")
+                            print(sanitized_completions[idx])
+                            print("-" * 50)
+                        elif dataset_name == "mbpp":
+                            print(f"Task: {raw_prompts[idx]}")
+                            print("-" * 50)
+                            print("Generation (sanitized):")
+                            print(sanitized_completions[idx])
+                            print("-" * 50)
+                    else:
+                        print(f"Question: {questions[idx]}")
+                        print("-" * 50)
+                        print("Generation:")
+                        print(generated_texts[idx])
+                        print("-" * 50)
+                        print(f"Ground truth: {gt_answers[idx]}")
+        finally:
+            progress.close()
     if log_memory and (accelerator is None or accelerator.is_main_process):
         log_cuda_memory(
             prefix=f"eval end dataset={dataset_name} sampler={remasking}",
@@ -465,19 +505,7 @@ def get_local_path_and_save_results(
 ) -> Path | None:
     file_path = None
     if not args.dont_save:
-        filename_parts = [
-            args.dataset,
-            model_name,
-            args.gen_length,
-            args.diffusion_steps,
-            args.block_length,
-            args.remasking,
-            0,  # for legacy reasons we include the rank of the process
-            "generations",
-        ]
-        file_path = Path(args.output_dir) / (
-            "_".join(map(str, filename_parts)) + ".json"
-        )
+        file_path = build_generation_result_path(args, model_name, ".json")
         os.makedirs(args.output_dir, exist_ok=True)
         with open(file_path, "w") as f:
             json.dump(results, f, indent=2, sort_keys=False)
@@ -486,17 +514,7 @@ def get_local_path_and_save_results(
 
 
 def get_incremental_jsonl_path(args: argparse.Namespace, model_name: str) -> Path:
-    filename_parts = [
-        args.dataset,
-        model_name,
-        args.gen_length,
-        args.diffusion_steps,
-        args.block_length,
-        args.remasking,
-        0,
-        "generations",
-    ]
-    return Path(args.output_dir) / ("_".join(map(str, filename_parts)) + ".jsonl")
+    return build_generation_result_path(args, model_name, ".jsonl")
 
 
 def generations_from_jsonl(path: str | Path) -> list[dict]:
@@ -713,8 +731,14 @@ if __name__ == "__main__":
             )
         sys.exit(128 + signum)
 
-    signal.signal(signal.SIGTERM, handle_signal)
-    signal.signal(signal.SIGINT, handle_signal)
+    previous_signal_handlers = {}
+    if (
+        accelerator.is_main_process
+        and threading.current_thread() is threading.main_thread()
+    ):
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            previous_signal_handlers[sig] = signal.getsignal(sig)
+            signal.signal(sig, handle_signal)
 
     # Load the base model and tokenizer
     model = AutoModel.from_pretrained(
@@ -866,6 +890,7 @@ if __name__ == "__main__":
     if accelerator.is_main_process:
         if not args.dont_save and output_jsonl.exists():
             results["generations"] = generations_from_jsonl(output_jsonl)
+            results["total_processed"] = len(results["generations"])
         if args.dataset in {"humaneval", "mbpp"}:
             results["code_eval_results"] = evaluate_code(
                 results["generations"], args.dataset
@@ -922,6 +947,9 @@ if __name__ == "__main__":
         print(f"Batch size: {args.batch_size}")
         print(f"Multi-GPU processes: {accelerator.num_processes}")
         print("=============================\n")
+
+    for sig, handler in previous_signal_handlers.items():
+        signal.signal(sig, handler)
 
     accelerator.end_training()
     accelerator.free_memory()

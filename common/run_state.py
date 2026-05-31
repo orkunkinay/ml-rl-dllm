@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import os
 import random
+import shutil
 import socket
 import subprocess
 import time
@@ -176,6 +177,9 @@ def prepare_local_run_dir(
     run_name = run_name or deterministic_run_name(config)
     run_dir = Path(run_root) / sanitize_run_component(run_name)
     exists_with_contents = run_dir.exists() and any(run_dir.iterdir())
+    if exists_with_contents and overwrite:
+        shutil.rmtree(run_dir)
+        exists_with_contents = False
     if exists_with_contents and not overwrite and resume != "auto":
         raise FileExistsError(
             f"Run directory already exists: {run_dir}. Use --resume auto to continue "

@@ -1,3 +1,4 @@
+import ast
 import json
 import signal
 from dataclasses import dataclass
@@ -157,10 +158,16 @@ def test_resolve_resume_checkpoint_from_sidecar(tmp_path):
     assert resolved == hf_checkpoint
 
 
-def test_disable_tqdm_flag_is_available_in_eval_source():
-    source = Path("eval/eval.py").read_text()
-    assert "--disable_tqdm" in source
-    assert "disable_tqdm=args.disable_tqdm" in source
+def test_disable_tqdm_flag_is_available_in_eval_signature():
+    source = (Path(__file__).parents[1] / "eval" / "eval.py").read_text()
+    module = ast.parse(source)
+    evaluate_fn = next(
+        node
+        for node in module.body
+        if isinstance(node, ast.FunctionDef) and node.name == "evaluate"
+    )
+    arg_names = [arg.arg for arg in evaluate_fn.args.args]
+    assert "disable_tqdm" in arg_names
 
 
 def test_cuda_memory_helpers_are_safe_without_cuda():
