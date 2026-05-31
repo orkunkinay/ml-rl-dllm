@@ -4,8 +4,11 @@
 #
 ### Adapted from https://github.com/dllm-reasoning/d1 (Apache 2.0)
 import os
+import signal
+import sys
 import tempfile
 from contextlib import nullcontext
+from pathlib import Path
 
 import accelerate
 import torch
@@ -24,6 +27,12 @@ from common.config import Config
 from common.models.policy import DiTHiddenStatePolicy
 from common.models.policy import DiTConfidencePolicy
 from common.models.policy import PolicyHFWrapper
+from common.run_state import ClusterStateCallback
+from common.run_state import atomic_write_json
+from common.run_state import config_to_dict
+from common.run_state import prepare_local_run_dir
+from common.run_state import resolve_resume_checkpoint
+from common.run_state import restore_rng_state
 from common.s3 import S3UploadCallback
 from common.s3 import download_s3_checkpoint
 from common.s3 import get_latest_s3_checkpoint
@@ -230,18 +239,34 @@ def main(grpo_config, model_config):
         )
 
     output_dir = grpo_config.output_dir
-    s3_output = "s3" in output_dir
+    s3_output = "s3" in str(output_dir)
+    run_dir = None
+    cluster_callback = None
     if s3_output:
         # For remote paths we save checkpoints in a temp dir locally and then
         # use a callback to push them to aws
         context_manager = tempfile.TemporaryDirectory()
         callbacks = [S3UploadCallback(output_dir)]
     else:
-        # Otherwise use a context that is basically a no-op, so
-        # checkpoints will be written to the path indicated by output_dir
+        run_dir = prepare_local_run_dir(
+            grpo_config,
+            resume=grpo_config.resume,
+            overwrite=grpo_config.overwrite,
+            run_root=grpo_config.run_root,
+            run_name=grpo_config.run_name,
+        )
+        output_dir = str(run_dir)
+        grpo_config.output_dir = output_dir
+        grpo_config.disable_tqdm = bool(grpo_config.disable_tqdm)
+        config_snapshot = {
+            "grpo_config": config_to_dict(grpo_config),
+            "model_config": config_to_dict(model_config),
+        }
+        atomic_write_json(run_dir / "config.yaml", config_snapshot)
         context_manager = nullcontext(output_dir)
         callbacks = []
-        # Do however need to make sure that the local path exists!
+        cluster_callback = ClusterStateCallback(run_dir, grpo_config)
+        callbacks.append(cluster_callback)
         os.makedirs(output_dir, exist_ok=True)
 
     with context_manager as local_output_dir:
@@ -251,13 +276,32 @@ def main(grpo_config, model_config):
         resume_from = None
         if s3_output:
             latest = get_latest_s3_checkpoint(output_dir)
-            if latest:
+            if latest and grpo_config.resume == "auto":
                 resume_from = download_s3_checkpoint(
                     output_dir, latest, local_output_dir
                 )
                 print(
                     f"=== Auto-resume: found {latest}, downloaded to {resume_from} ==="
                 )
+        else:
+            resume_from = resolve_resume_checkpoint(
+                grpo_config.resume, local_output_dir
+            )
+            if grpo_config.resume == "auto" and resume_from is None:
+                print("=== Auto-resume: no checkpoint found; starting fresh ===")
+            elif resume_from is not None:
+                print(f"=== Resuming from checkpoint: {resume_from} ===")
+                sidecar = Path(local_output_dir) / "checkpoints" / "checkpoint_latest.pt"
+                if sidecar.exists():
+                    payload = torch.load(sidecar, map_location="cpu", weights_only=False)
+                    restore_rng_state(payload.get("rng_state"))
+                    print(
+                        "=== Resume state: "
+                        f"step={payload.get('global_step')} "
+                        f"epoch={payload.get('epoch')} "
+                        f"alpha={payload.get('alpha')} "
+                        f"seed={payload.get('seed')} ==="
+                    )
 
         trainer = Trainer(
             args=grpo_config,
@@ -268,7 +312,25 @@ def main(grpo_config, model_config):
             processing_class=tokenizer,
             callbacks=callbacks,
         )
-        trainer.train(resume_from_checkpoint=resume_from)
+
+        def handle_signal(signum, frame):
+            if cluster_callback is not None and trainer.accelerator.is_main_process:
+                print(f"\n=== Caught signal {signum}; saving emergency checkpoint ===")
+                cluster_callback.save_emergency_checkpoint(trainer, signum=signum)
+            sys.exit(128 + signum)
+
+        previous_handlers = {}
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            previous_handlers[sig] = signal.getsignal(sig)
+            signal.signal(sig, handle_signal)
+
+        try:
+            trainer.train(
+                resume_from_checkpoint=str(resume_from) if resume_from else None
+            )
+        finally:
+            for sig, handler in previous_handlers.items():
+                signal.signal(sig, handler)
 
         if resume_from:
             print(f"=== Resumed training from step {trainer.state.global_step} ===")

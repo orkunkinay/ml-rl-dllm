@@ -9,6 +9,8 @@ import math
 import os
 import random
 import re
+import signal
+import sys
 import time
 from pathlib import Path
 
@@ -31,6 +33,14 @@ from common.generation.generation import generate_unified
 from common.models.policy import DiTHiddenStatePolicy
 from common.models.policy import DiTConfidencePolicy
 from common.models.policy import PolicyHFWrapper
+from common.parsing.parse_and_get_acc import check_gsm_correct
+from common.parsing.parse_and_get_acc import check_math_correct
+from common.parsing.parse_and_get_acc import extract_gsm_answer
+from common.parsing.parse_and_get_acc import extract_math_answer
+from common.run_state import append_jsonl
+from common.run_state import completed_jsonl_sample_ids
+from common.run_state import iter_jsonl
+from common.run_state import write_progress
 from data.loaders.gsm8k import GSM8KDataset
 from data.loaders.humaneval import HumanEvalDataset
 from data.loaders.math500 import MATH500Dataset
@@ -105,6 +115,13 @@ def evaluate(
     confidences_top_p=1,
     mask_id=126336,
     model_type=None,
+    output_jsonl=None,
+    completed_sample_ids=None,
+    disable_tqdm=False,
+    progress_dir=None,
+    alpha=None,
+    seed=None,
+    tqdm_position=0,
 ):
     model.eval()
     total_processed = torch.tensor(0, device=model.device)
@@ -113,12 +130,38 @@ def evaluate(
     device = model.device
 
     is_code_dataset = dataset_name in ["humaneval", "mbpp"]
+    completed_sample_ids = completed_sample_ids or set()
+    total_seen = len(completed_sample_ids)
+    running_correct = 0
+    running_nfe = []
+
+    def make_sample_id(batch, index):
+        if dataset_name == "humaneval":
+            return str(batch["task_ids"][index])
+        if dataset_name == "mbpp":
+            return str(batch["task_ids"][index])
+        if "questions" in batch:
+            return f"{dataset_name}:{batch['questions'][index]}"
+        return f"{dataset_name}:{total_seen + index}"
 
     with torch.no_grad():
-        for batch in tqdm(
-            dataloader,
-            disable=(not accelerator.is_main_process if accelerator else False),
-        ):
+        progress = tqdm(
+            total=len(dataloader.dataset) if hasattr(dataloader, "dataset") else None,
+            disable=disable_tqdm
+            or (not accelerator.is_main_process if accelerator else False),
+            dynamic_ncols=True,
+            position=tqdm_position,
+            initial=len(completed_sample_ids),
+            desc=f"dataset={dataset_name} sampler={remasking} alpha={alpha}",
+        )
+        for batch in dataloader:
+            batch_sample_ids = [
+                make_sample_id(batch, j) for j in range(len(batch["prompts"]))
+            ]
+            if batch_sample_ids and all(
+                sid in completed_sample_ids for sid in batch_sample_ids
+            ):
+                continue
             start_time = time.time()
             input_ids = batch["input_ids"].to(device)
 
@@ -252,6 +295,73 @@ def evaluate(
             all_generations.extend(example_result)
             total_processed += len(generated_texts)
             wall_times.append(batch_wall_time)
+            rows_to_append = []
+            for j, item in enumerate(example_result):
+                sample_id = batch_sample_ids[j]
+                if sample_id in completed_sample_ids:
+                    continue
+                if is_code_dataset:
+                    prediction = item["generation_sanitized"]
+                    answer = item["test_cases"]
+                    prompt = item["prompt"]
+                    nfe = item["steps"]
+                else:
+                    prediction = item["generations"]
+                    answer = item["ground_truth"]
+                    prompt = item["prompt_input"]
+                    nfe = item["steps"]
+                correct = None
+                if dataset_name == "gsm8k":
+                    correct = check_gsm_correct(extract_gsm_answer(prediction), answer)
+                elif dataset_name == "math":
+                    correct = check_math_correct(
+                        extract_math_answer(prediction), answer
+                    )
+                if correct is True:
+                    running_correct += 1
+                row = {
+                    "sample_id": sample_id,
+                    "prompt": prompt,
+                    "prediction": prediction,
+                    "answer": answer,
+                    "correct": correct,
+                    "nfe": nfe,
+                    "sampler": remasking,
+                    "alpha": alpha,
+                    "seed": seed,
+                    "dataset": dataset_name,
+                    "raw_result": item,
+                }
+                rows_to_append.append(row)
+                completed_sample_ids.add(sample_id)
+                running_nfe.append(float(nfe))
+            if output_jsonl is not None and (
+                accelerator is None or accelerator.is_main_process
+            ):
+                for row in rows_to_append:
+                    append_jsonl(output_jsonl, row)
+            progress.update(len(rows_to_append))
+            total_seen = len(completed_sample_ids)
+            mean_nfe = sum(running_nfe) / len(running_nfe) if running_nfe else None
+            progress.set_postfix(sample=total_seen, mean_nfe=mean_nfe)
+            if progress_dir and (accelerator is None or accelerator.is_main_process):
+                write_progress(
+                    progress_dir,
+                    "running",
+                    alpha=alpha,
+                    seed=seed,
+                    global_step=total_seen,
+                    total_steps=len(dataloader.dataset)
+                    if hasattr(dataloader, "dataset")
+                    else None,
+                    completed_fraction=(
+                        total_seen / len(dataloader.dataset)
+                        if hasattr(dataloader, "dataset") and len(dataloader.dataset)
+                        else None
+                    ),
+                    latest_metrics={"mean_nfe": mean_nfe, "correct": running_correct},
+                    extra={"dataset": dataset_name, "sampler": remasking},
+                )
 
             if accelerator and accelerator.is_main_process:
                 idx = random.randint(0, len(prompts) - 1)
@@ -276,7 +386,8 @@ def evaluate(
                     print("-" * 50)
                     print(f"Ground truth: {gt_answers[idx]}")
 
-    avg_wall_time = sum(wall_times) / len(wall_times)
+        progress.close()
+    avg_wall_time = sum(wall_times) / len(wall_times) if wall_times else 0.0
     metrics = {
         "wall_time": avg_wall_time,
         "generations": all_generations,
@@ -344,6 +455,29 @@ def get_local_path_and_save_results(
             json.dump(results, f, indent=2, sort_keys=False)
         print(f"Saved results locally to {file_path}")
     return file_path
+
+
+def get_incremental_jsonl_path(args: argparse.Namespace, model_name: str) -> Path:
+    filename_parts = [
+        args.dataset,
+        model_name,
+        args.gen_length,
+        args.diffusion_steps,
+        args.block_length,
+        args.remasking,
+        0,
+        "generations",
+    ]
+    return Path(args.output_dir) / ("_".join(map(str, filename_parts)) + ".jsonl")
+
+
+def generations_from_jsonl(path: str | Path) -> list[dict]:
+    generations = []
+    for row in iter_jsonl(path) or []:
+        raw = row.get("raw_result")
+        if raw is not None:
+            generations.append(raw)
+    return generations
 
 
 class CustomDistributedSampler(DistributedSampler):
@@ -433,6 +567,14 @@ if __name__ == "__main__":
     parser.add_argument("--temperature", type=float, default=0.0)
     parser.add_argument("--temperature_policy", type=float, default=1.0)
     parser.add_argument(
+        "--resume",
+        default=None,
+        help="Resume evaluation from existing JSONL results. Use 'auto'.",
+    )
+    parser.add_argument("--overwrite", action="store_true")
+    parser.add_argument("--disable_tqdm", action="store_true")
+    parser.add_argument("--tqdm_position", type=int, default=0)
+    parser.add_argument(
         "--sampling_mode",
         type=str,
         default=None,
@@ -504,6 +646,44 @@ if __name__ == "__main__":
 
     if len(args.suffix) > 0:
         model_name = model_name + f"_{args.suffix}"
+
+    output_jsonl = get_incremental_jsonl_path(args, model_name)
+    completed_sample_ids = set()
+    if not args.dont_save:
+        os.makedirs(args.output_dir, exist_ok=True)
+        if args.resume == "auto":
+            completed_sample_ids = completed_jsonl_sample_ids(output_jsonl)
+            if accelerator.is_main_process:
+                print(
+                    f"Resume auto: found {len(completed_sample_ids)} completed samples in {output_jsonl}"
+                )
+        elif output_jsonl.exists() and not args.overwrite:
+            raise FileExistsError(
+                f"Incremental results already exist: {output_jsonl}. "
+                "Use --resume auto to continue or --overwrite to append a fresh run intentionally."
+            )
+        elif output_jsonl.exists() and args.overwrite and accelerator.is_main_process:
+            output_jsonl.unlink()
+
+    def handle_signal(signum, frame):
+        if accelerator.is_main_process:
+            write_progress(
+                args.output_dir,
+                "interrupted",
+                alpha=args.grpo_config.alpha_compute_reward,
+                seed=args.seed,
+                global_step=len(completed_jsonl_sample_ids(output_jsonl)),
+                last_checkpoint=str(output_jsonl),
+                extra={
+                    "signal": signum,
+                    "dataset": args.dataset,
+                    "sampler": args.remasking,
+                },
+            )
+        sys.exit(128 + signum)
+
+    signal.signal(signal.SIGTERM, handle_signal)
+    signal.signal(signal.SIGINT, handle_signal)
 
     # Load the base model and tokenizer
     model = AutoModel.from_pretrained(
@@ -620,6 +800,13 @@ if __name__ == "__main__":
         confidences_top_p=args.grpo_config.confidences_top_p
         if args.remasking == "policy"
         else 1,
+        output_jsonl=None if args.dont_save else output_jsonl,
+        completed_sample_ids=completed_sample_ids,
+        disable_tqdm=args.disable_tqdm,
+        progress_dir=args.output_dir,
+        alpha=args.grpo_config.alpha_compute_reward,
+        seed=args.seed,
+        tqdm_position=args.tqdm_position,
     )
 
     if accelerator.num_processes > 1:
@@ -628,6 +815,8 @@ if __name__ == "__main__":
             results["generations"] = all_gpu_generations
 
     if accelerator.is_main_process:
+        if not args.dont_save and output_jsonl.exists():
+            results["generations"] = generations_from_jsonl(output_jsonl)
         if args.dataset in {"humaneval", "mbpp"}:
             results["code_eval_results"] = evaluate_code(
                 results["generations"], args.dataset
@@ -648,6 +837,19 @@ if __name__ == "__main__":
             }
         )
         get_local_path_and_save_results(results, args, model_name)
+        if not args.dont_save:
+            write_progress(
+                args.output_dir,
+                "completed",
+                alpha=args.grpo_config.alpha_compute_reward,
+                seed=args.seed,
+                global_step=len(results["generations"]),
+                total_steps=len(dataset) if hasattr(dataset, "__len__") else None,
+                completed_fraction=1.0,
+                last_checkpoint=str(output_jsonl),
+                latest_metrics=results.get("metrics", {}),
+                extra={"dataset": args.dataset, "sampler": args.remasking},
+            )
 
         # Before exiting, print some basic metrics about the test set to make sure we processed
         # as many samples as we expected

@@ -95,6 +95,35 @@ For multi-GPU training, you can control the sharding using `accelerate`. Since t
 Checkpoints are saved to `output_dir` specified in the config. This also supports automatically pushing the checkpoints to an s3 bucket when the `output_dir` starts with `s3://`.
 To use this functionality, you must implement the function `common/s3.py:configure_s3(path)`, which we have left as a stub for your convenience.
 
+### Cluster Resume Support
+
+For local cluster runs, training now writes deterministic run directories under `runs/` using the model, block length, alpha, and seed. Each run contains the normal `checkpoint-*` directories plus `checkpoints/checkpoint_latest.pt`, `metrics.jsonl`, and `progress.json`.
+
+Fresh training:
+
+```bash
+python -m train.train \
+    --config configs/experiment_configs/llada_8b_instruct_dit_confidence_BL32_mixture.yaml
+```
+
+Resume the latest checkpoint in the deterministic run directory:
+
+```bash
+python -m train.train \
+    --config configs/experiment_configs/llada_8b_instruct_dit_confidence_BL32_mixture.yaml \
+    --resume auto
+```
+
+Resume an explicit sidecar checkpoint:
+
+```bash
+python -m train.train \
+    --config configs/experiment_configs/llada_8b_instruct_dit_confidence_BL32_mixture.yaml \
+    --resume runs/paper_llada_bl32_alpha_0.3_seed_1/checkpoints/checkpoint_latest.pt
+```
+
+Use `--disable_tqdm` for less noisy non-interactive cluster logs. If a job receives `SIGTERM` or `SIGINT`, training writes an emergency checkpoint and marks `progress.json` as `interrupted`.
+
 ## Evaluation
 
 The recommended way to evaluate is using `eval.pipeline`, which handles checkpoint resolution, multi-seed evaluation, and result aggregation:
@@ -118,6 +147,34 @@ Key arguments:
 - `--seeds`: comma-separated random seeds for multiple evaluation runs
 
 Results are saved to `--save_path` as JSON files containing generations, with aggregated metrics in CSV format.
+
+Evaluation writes incremental `*_generations.jsonl` files, so interrupted evaluations can skip samples that already finished. Resume a direct evaluation with:
+
+```bash
+python -m eval.eval \
+    --policy_path runs/paper_llada_bl32_alpha_0.3_seed_1/checkpoint-1000/model.safetensors \
+    --config configs/experiment_configs/llada_8b_instruct_dit_confidence_BL32_mixture.yaml \
+    --dataset gsm8k \
+    --seed 42 \
+    --temperature_policy 1.0 \
+    --sampling_mode bernoulli-argmax \
+    --output_dir ./eval_results/eval_policy_alpha_0.3_gsm8k_seed_42 \
+    --resume auto
+```
+
+Resume or skip completed sweep work with:
+
+```bash
+python -m eval.pipeline ./runs/paper_llada_bl32_alpha_0.3_seed_1 \
+    configs/experiment_configs/llada_8b_instruct_dit_confidence_BL32_mixture.yaml \
+    --checkpoints last \
+    --datasets all \
+    --temperatures 1.0 \
+    --seeds 42,43,44 \
+    --sampling_mode bernoulli-argmax \
+    --save_path ./eval_results \
+    --resume auto
+```
 
 ### Direct Evaluation
 

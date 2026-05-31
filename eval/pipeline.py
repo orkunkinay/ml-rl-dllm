@@ -12,6 +12,10 @@ from pathlib import Path
 
 import s3fs
 import torch
+from tqdm import tqdm
+
+from common.run_state import jsonl_is_nonempty_parseable
+from common.run_state import read_json
 
 
 @dataclass
@@ -28,6 +32,8 @@ class EvalConfig:
     model_path: str
     save_path: str
     n_test: int | None
+    resume: str | None
+    disable_tqdm: bool
 
 
 def get_s3() -> s3fs.S3FileSystem:
@@ -102,7 +108,8 @@ def run_eval(
 ):
     script_dir = Path(__file__).parent
 
-    for ckpt, dataset, seed, temp in evals_to_run:
+    iterator = tqdm(evals_to_run, dynamic_ncols=True, disable=cfg.disable_tqdm)
+    for ckpt, dataset, seed, temp in iterator:
         ckpt_dir = local_ckpt_dir / f"checkpoint-{ckpt}"
         if ckpt.startswith("baseline-"):
             policy_path = ckpt_dir / ".baseline_marker"
@@ -120,6 +127,23 @@ def run_eval(
         if cfg.sampling_mode:
             output_dir = Path(f"{output_dir}_sampling_mode_{cfg.sampling_mode}")
         output_dir.mkdir(parents=True, exist_ok=True)
+        progress = read_json(output_dir / "progress.json", default={}) or {}
+        has_final_json = any(
+            p.stat().st_size > 0 for p in output_dir.glob("*_generations.json")
+        )
+        has_jsonl = any(
+            jsonl_is_nonempty_parseable(p)
+            for p in output_dir.glob("*_generations.jsonl")
+        )
+        if (
+            cfg.resume == "auto"
+            and progress.get("status") == "completed"
+            and (has_final_json or has_jsonl)
+        ):
+            print(
+                f"  Skipping completed eval: {ckpt} seed={seed} temp={temp} {dataset}"
+            )
+            continue
 
         cmd = [
             "accelerate",
@@ -147,6 +171,10 @@ def run_eval(
             "--temperature_policy",
             str(temp),
         ]
+        if cfg.resume:
+            cmd.extend(["--resume", cfg.resume])
+        if cfg.disable_tqdm:
+            cmd.append("--disable_tqdm")
         if cfg.sampling_mode:
             cmd.extend(["--sampling_mode", cfg.sampling_mode])
         if cfg.block_length:
@@ -244,6 +272,8 @@ def main():
     parser.add_argument("--model_path", default="GSAI-ML/LLaDA-8B-Instruct")
     parser.add_argument("--save_path", default="./eval_results")
     parser.add_argument("--n_test", type=int, default=None)
+    parser.add_argument("--resume", default="auto")
+    parser.add_argument("--disable_tqdm", action="store_true")
     parser.add_argument("--no_aggregate", action="store_true")
     args = parser.parse_args()
 
@@ -274,6 +304,8 @@ def main():
             model_path=args.model_path,
             save_path=args.save_path,
             n_test=args.n_test,
+            resume=args.resume,
+            disable_tqdm=args.disable_tqdm,
         )
         try:
             run_names.append(run_pipeline(cfg))

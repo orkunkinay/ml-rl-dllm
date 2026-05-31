@@ -35,6 +35,7 @@ from trl.trainer.utils import print_prompt_completions_sample
 from common.generation.generation import generate_unified
 from common.generation.sampling import bernoulli_batch_loglik
 from common.generation.sampling import dpls_batch_loglik
+from common.run_state import ClusterStateCallback
 from common.s3 import S3UploadCallback
 
 try:
@@ -126,6 +127,18 @@ class Trainer(GRPOTrainer):
             unwrapped_model = self.accelerator.unwrap_model(self.model_wrapped)
             unwrapped_model.save_pretrained(checkpoint_dir)
             self.state.save_to_json(os.path.join(checkpoint_dir, "trainer_state.json"))
+            for callback in self.callback_handler.callbacks:
+                if isinstance(callback, ClusterStateCallback):
+                    callback.on_save(
+                        self.args,
+                        self.state,
+                        self.control,
+                        model=unwrapped_model,
+                        optimizer=self.optimizer,
+                        lr_scheduler=self.lr_scheduler,
+                        scaler=getattr(self, "scaler", None),
+                    )
+                    callback.on_train_end(self.args, self.state, self.control)
 
             if self.s3_callback is not None:
                 print(
@@ -894,6 +907,20 @@ class Trainer(GRPOTrainer):
                 print(
                     f"Saved checkpoint-best at step {self.train_reward_best_step} with train reward {self.train_reward_best}"
                 )
+                for callback in self.callback_handler.callbacks:
+                    if isinstance(callback, ClusterStateCallback):
+                        callback.on_save(
+                            self.args,
+                            self.state,
+                            self.control,
+                            model=unwrapped_model,
+                            optimizer=self.optimizer,
+                            lr_scheduler=self.lr_scheduler,
+                            scaler=getattr(self, "scaler", None),
+                            hf_checkpoint_path=_output_dir,
+                            alias_name="checkpoint_best.pt",
+                            update_latest=False,
+                        )
                 if self.s3_callback is not None:
                     # use the callback to push the checkpoint to s3
                     print(f"Uploading checkpoint-best to s3: {self.args.output_dir}")

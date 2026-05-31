@@ -191,3 +191,32 @@ class Config(GRPOConfig):
         default=None,
         metadata={"help": "Thresholds to use for expert steering (ES) rollouts."},
     )
+
+    # Cluster/resume controls. These do not affect the paper method; they only
+    # control run directories, sidecar state files, and logging behavior.
+    resume: Optional[str] = field(
+        default=None,
+        metadata={
+            "help": "Resume mode: 'auto' for latest checkpoint, or a checkpoint path."
+        },
+    )
+    overwrite: bool = field(
+        default=False,
+        metadata={"help": "Allow writing into an existing non-resumed run directory."},
+    )
+    run_root: str = field(
+        default="runs",
+        metadata={"help": "Root directory for deterministic local run directories."},
+    )
+    run_name: Optional[str] = field(
+        default=None,
+        metadata={"help": "Optional deterministic run directory name override."},
+    )
+    disable_tqdm: bool = field(
+        default=False,
+        metadata={"help": "Disable tqdm progress bars for cluster log files."},
+    )
+    tqdm_position: int = field(
+        default=0,
+        metadata={"help": "Base tqdm position for nested progress bars."},
+    )

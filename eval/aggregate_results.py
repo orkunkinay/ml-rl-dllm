@@ -11,6 +11,7 @@ import re
 
 import pandas as pd
 
+from common.run_state import iter_jsonl
 from common.parsing.parse_and_get_acc import parse_code_answers
 from common.parsing.parse_and_get_acc import parse_gsm_answers
 from common.parsing.parse_and_get_acc import parse_math_answers
@@ -71,6 +72,30 @@ def extract_run_name(json_file, results_dir):
     return parts[0] if parts else "unknown"
 
 
+def load_result_file(path):
+    if path.endswith(".jsonl"):
+        generations = []
+        wall_times = []
+        for row in iter_jsonl(path) or []:
+            raw = row.get("raw_result")
+            if raw is not None:
+                generations.append(raw)
+                if "wall_time" in raw:
+                    wall_times.append(raw["wall_time"])
+        return {
+            "generations": generations,
+            "metrics": {
+                "wall_time": sum(wall_times) / len(wall_times) if wall_times else 0,
+                "total_processed": len(generations),
+            },
+            "test_set_verification": {
+                "actual_samples_processed": len(generations),
+            },
+        }
+    with open(path, "r") as f:
+        return json.load(f)
+
+
 def aggregate_results(results_dir):
     """Aggregate results from all evaluation runs (eval.py format only)."""
 
@@ -78,6 +103,12 @@ def aggregate_results(results_dir):
     evalpy_files = glob.glob(
         os.path.join(glob.escape(results_dir), "**", "*_generations.json"),
         recursive=True,
+    )
+    evalpy_files.extend(
+        glob.glob(
+            os.path.join(glob.escape(results_dir), "**", "*_generations.jsonl"),
+            recursive=True,
+        )
     )
 
     if len(evalpy_files) == 0:
@@ -99,8 +130,7 @@ def aggregate_results(results_dir):
             run_name = extract_run_name(json_file, results_dir)
             dataset_name = extract_dataset_name(json_file)
 
-            with open(json_file, "r") as f:
-                data = json.load(f)
+            data = load_result_file(json_file)
 
             if dataset_name in ["humaneval", "mbpp"]:
                 (
