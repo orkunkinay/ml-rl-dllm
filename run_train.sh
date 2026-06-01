@@ -10,6 +10,8 @@
 cd ~/msc_project/ml-rl-dllm
 source .venv/bin/activate
 
+export HF_TOKEN=$(cat ~/.hf_token)
+
 module add cuda
 
 python -m train.train \
