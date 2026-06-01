@@ -11,6 +11,7 @@ cd ~/msc_project/ml-rl-dllm
 source .venv/bin/activate
 
 export HF_TOKEN=$(cat ~/.hf_token)
+export WANDB_API_KEY=$(cat ~/.wandb_api_key)
 
 module add cuda
 
