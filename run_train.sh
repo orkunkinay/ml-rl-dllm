@@ -20,7 +20,7 @@ export TORCH_COMPILE_DISABLE=1
 module add cuda
 
 python -m train.train \
-    --config configs/experiment_configs/llada_8b_instruct_dit_confidence_BL32_mixture.yaml \
+    --config configs/experiment_configs/llada_8b_instruct_dit_confidence_BL32_mixture_safe.yaml \
     --resume auto \
     --log_memory \
     --memory_log_interval 50 \
