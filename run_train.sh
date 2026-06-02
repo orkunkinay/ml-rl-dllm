@@ -6,6 +6,7 @@
 #SBATCH --time=04:00:00
 #SBATCH --mem=32G
 #SBATCH --gres=gpu:1
+#SBATCH --gres=gpu:3g.71gb:1
 
 cd ~/msc_project/ml-rl-dllm
 source .venv/bin/activate
@@ -18,6 +19,22 @@ export TORCHDYNAMO_DISABLE=1
 export TORCH_COMPILE_DISABLE=1
 
 module add cuda
+
+echo "===== NODE / GPU INFO ====="
+hostname
+nvidia-smi
+echo "==========================="
+
+python - <<'PY'
+import torch
+print("CUDA available:", torch.cuda.is_available())
+if torch.cuda.is_available():
+    props = torch.cuda.get_device_properties(0)
+    print("GPU:", props.name)
+    print("GPU memory GB:", props.total_memory / 1024**3)
+else:
+    raise RuntimeError("CUDA unavailable")
+PY
 
 python -m train.train \
     --config configs/experiment_configs/llada_8b_instruct_dit_confidence_BL32_mixture_safe.yaml \
