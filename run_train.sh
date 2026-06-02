@@ -14,6 +14,9 @@ export PYTHONNOUSERSITE=1
 export HF_TOKEN=$(cat ~/.hf_token)
 export WANDB_API_KEY=$(cat ~/.wandb_api_key)
 
+export TORCHDYNAMO_DISABLE=1
+export TORCH_COMPILE_DISABLE=1
+
 module add cuda
 
 python -m train.train \
