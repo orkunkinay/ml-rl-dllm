@@ -197,6 +197,23 @@ class Trainer(GRPOTrainer):
         group_batch_sizes = [
             policy_output["sampling_masks"].size(0) for policy_output in policy_outputs
         ]
+
+        print("DEBUG group_batch_sizes:", group_batch_sizes, flush=True)
+        print("DEBUG sum(group_batch_sizes):", sum(group_batch_sizes), flush=True)
+        print("DEBUG advantages shape:", inputs["advantages"].shape, flush=True)
+        print("DEBUG input keys:", inputs.keys(), flush=True)
+        
+        for k, v in inputs.items():
+            if hasattr(v, "shape"):
+                print(f"DEBUG {k}: {v.shape}", flush=True)
+            else:
+                print(f"DEBUG {k}: {type(v)}", flush=True)
+        
+        assert sum(group_batch_sizes) == inputs["advantages"].size(0), (
+            f"group_batch_sizes sum={sum(group_batch_sizes)}, "
+            f"advantages={inputs['advantages'].size(0)}"
+        )
+
         assert sum(group_batch_sizes) == inputs["advantages"].size(0)
 
         # Check if ES (Expert Steering) is enabled and compute mixture distribution weights
