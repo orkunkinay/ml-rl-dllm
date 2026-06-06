@@ -198,23 +198,10 @@ class Trainer(GRPOTrainer):
             policy_output["sampling_masks"].size(0) for policy_output in policy_outputs
         ]
 
-        print("DEBUG group_batch_sizes:", group_batch_sizes, flush=True)
-        print("DEBUG sum(group_batch_sizes):", sum(group_batch_sizes), flush=True)
-        print("DEBUG advantages shape:", inputs["advantages"].shape, flush=True)
-        print("DEBUG input keys:", inputs.keys(), flush=True)
-        
-        for k, v in inputs.items():
-            if hasattr(v, "shape"):
-                print(f"DEBUG {k}: {v.shape}", flush=True)
-            else:
-                print(f"DEBUG {k}: {type(v)}", flush=True)
-        
         assert sum(group_batch_sizes) == inputs["advantages"].size(0), (
             f"group_batch_sizes sum={sum(group_batch_sizes)}, "
             f"advantages={inputs['advantages'].size(0)}"
         )
-
-        assert sum(group_batch_sizes) == inputs["advantages"].size(0)
 
         # Check if ES (Expert Steering) is enabled and compute mixture distribution weights
         has_es = (
@@ -826,6 +813,7 @@ class Trainer(GRPOTrainer):
                 "Please ensure that at least one reward function returns a valid reward."
             )
 
+        local_num_samples = rewards_per_func.size(0)
         rewards_per_func = gather(rewards_per_func)
         rewards = (
             rewards_per_func * self.reward_weights.to(device).unsqueeze(0)
@@ -845,11 +833,10 @@ class Trainer(GRPOTrainer):
         total_prompts = std_grouped_rewards.size(0)
         zero_std_ratio = zero_std_count / total_prompts if total_prompts > 0 else 0.0
 
-        # Slice out this process's advantages
-        # Each process has per_device_train_batch_size items (potentially multiple groups)
-        items_per_process = self.args.per_device_train_batch_size + (
-            len(self.args.es_thresholds) if self.args.es_thresholds else 0
-        )
+        # Slice out this process's advantages. The dataloader batch can already
+        # contain repeated prompts for each generation, so the local rollout
+        # count is the number of scored samples rather than per_device_train_batch_size.
+        items_per_process = local_num_samples
         process_slice = slice(
             self.accelerator.process_index * items_per_process,
             (self.accelerator.process_index + 1) * items_per_process,
