@@ -57,7 +57,7 @@ save_total_limit: 500
 max_completion_length: 256
 max_prompt_length: 200
 block_length: 32
-generation_batch_size: 64
+generation_batch_size: 32
 remasking: policy
 beta: 0.
 epsilon: 0.5
