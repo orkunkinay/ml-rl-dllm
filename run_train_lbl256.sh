@@ -6,7 +6,6 @@
 #SBATCH --time=24:00:00
 #SBATCH --mem=32G
 #SBATCH --gres=gpu:1
-#SBATCH --gres=gpu:3g.71gb:1
 
 cd ~/msc_project/ml-rl-dllm
 source .venv/bin/activate
@@ -37,7 +36,7 @@ else:
 PY
 
 python -m train.train \
-    --config configs/experiment_configs/llada_8b_instruct_dit_confidence_BL32_mixture_safe.yaml \
+    --config configs/experiment_configs/llada_8b_instruct_dit_confidence_BL256_mixture_safe.yaml \
     --overwrite \
     --log_memory \
     --memory_log_interval 50 \

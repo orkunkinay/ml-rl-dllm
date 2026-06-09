@@ -37,7 +37,7 @@ else:
 PY
 
 python -m train.train \
-    --config configs/experiment_configs/llada_8b_instruct_dit_confidence_BL32_mixture_safe.yaml \
+    --config configs/experiment_configs/dream_7b_dit_confidence_BL32_mixture.yaml \
     --overwrite \
     --log_memory \
     --memory_log_interval 50 \
