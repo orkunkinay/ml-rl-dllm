@@ -1,10 +1,10 @@
 #!/bin/bash
 #SBATCH --job-name=llada_train
-#SBATCH --partition=ICF-Free
-#SBATCH --gres=gpu:a40:1
+#SBATCH --partition=Teaching
+#SBATCH --gres=gpu:1g.18gb:1
 #SBATCH --output=logs/llada_train_%j.out
 #SBATCH --error=logs/llada_train_%j.err
-#SBATCH --time=24:00:00
+#SBATCH --time=48:00:00
 #SBATCH --mem=32G
 
 cd ~/msc_project/ml-rl-dllm
