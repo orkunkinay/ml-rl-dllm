@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=llada_train
 #SBATCH --partition=Teaching
-#SBATCH --gres=gpu:1g.18gb:1
+#SBATCH --gres=gpu:3g.71gb:1
 #SBATCH --output=logs/llada_train_%j.out
 #SBATCH --error=logs/llada_train_%j.err
 #SBATCH --time=48:00:00
