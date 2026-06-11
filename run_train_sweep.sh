@@ -1,11 +1,18 @@
 #!/bin/bash
-#SBATCH --job-name=llada_train
+#SBATCH --job-name=llada_sweep
 #SBATCH --partition=Teaching
 #SBATCH --gres=gpu:3g.71gb:1
-#SBATCH --output=logs/llada_train_%j.out
-#SBATCH --error=logs/llada_train_%j.err
+#SBATCH --output=logs/llada_sweep_%j.out
+#SBATCH --error=logs/llada_sweep_%j.err
 #SBATCH --time=00:20:00
 #SBATCH --mem=32G
+
+# Usage: sbatch run_train_sweep.sh <config_path>
+CONFIG_PATH="$1"
+if [ -z "$CONFIG_PATH" ]; then
+    echo "ERROR: no config path given. Usage: sbatch run_train_sweep.sh <config_path>"
+    exit 1
+fi
 
 cd ~/msc_project/ml-rl-dllm
 source .venv/bin/activate
@@ -36,11 +43,12 @@ else:
 PY
 
 echo "===== TRAINING CONFIG SUMMARY ====="
-python - <<'PY'
+CONFIG_PATH="$CONFIG_PATH" python - <<'PY'
+import os
 from pathlib import Path
 import yaml
 
-config_path = Path("configs/experiment_configs/llada_8b_instruct_dit_confidence_BL32_mixture_safe.yaml")
+config_path = Path(os.environ["CONFIG_PATH"])
 
 with config_path.open("r") as f:
     cfg = yaml.safe_load(f)
@@ -49,6 +57,7 @@ for key in [
     "num_generations",
     "per_device_train_batch_size",
     "generation_batch_size",
+    "run_name",
 ]:
     print(f"{key}: {cfg.get(key)}")
 
@@ -57,7 +66,7 @@ PY
 echo "==================================="
 
 python -m train.train \
-    --config configs/experiment_configs/llada_8b_instruct_dit_confidence_BL32_mixture_safe.yaml \
+    --config "$CONFIG_PATH" \
     --overwrite \
     --log_memory \
     --memory_log_interval 50 \
