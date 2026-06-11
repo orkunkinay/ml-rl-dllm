@@ -4,7 +4,7 @@
 #SBATCH --gres=gpu:3g.71gb:1
 #SBATCH --output=logs/llada_train_%j.out
 #SBATCH --error=logs/llada_train_%j.err
-#SBATCH --time=16:00:00
+#SBATCH --time=2:00:00
 #SBATCH --mem=32G
 
 cd ~/msc_project/ml-rl-dllm
