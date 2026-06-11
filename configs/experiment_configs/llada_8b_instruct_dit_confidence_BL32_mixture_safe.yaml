@@ -39,7 +39,7 @@ reward_weights:
   - 0.0
 
 # Reduced for safe GPU memory test
-num_generations: 2
+num_generations: 4
 num_train_epochs: 1
 
 per_device_eval_batch_size: 1
