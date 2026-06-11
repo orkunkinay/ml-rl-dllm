@@ -5,7 +5,7 @@
 #SBATCH --error=logs/llada_train_%j.err
 #SBATCH --time=12:00:00
 #SBATCH --mem=32G
-#SBATCH --gres=gpu:1g.18gb:4
+#SBATCH --gres=gpu:3g.71gb:1
 
 cd ~/msc_project/ml-rl-dllm
 source .venv/bin/activate
