@@ -10,7 +10,7 @@ load_in_4bit: false
 model_path: GSAI-ML/LLaDA-8B-Instruct
 
 # Safer than flash_attention_2 because flash-attn is not installed.
-attn_implementation: sdpa
+attn_implementation: flash_attention_2
 
 # GRPOConfig
 dataset: gsm8k_and_math
@@ -63,7 +63,7 @@ save_total_limit: 2
 max_completion_length: 256
 max_prompt_length: 200
 block_length: 32
-generation_batch_size: 32
+generation_batch_size: 4
 remasking: policy
 beta: 0.
 epsilon: 0.5
