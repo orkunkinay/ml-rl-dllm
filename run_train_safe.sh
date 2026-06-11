@@ -35,6 +35,27 @@ else:
     raise RuntimeError("CUDA unavailable")
 PY
 
+echo "===== TRAINING CONFIG SUMMARY ====="
+python - <<'PY'
+from pathlib import Path
+import yaml
+
+config_path = Path("configs/experiment_configs/llada_8b_instruct_dit_confidence_BL32_mixture_safe.yaml")
+
+with config_path.open("r") as f:
+    cfg = yaml.safe_load(f)
+
+for key in [
+    "num_generations",
+    "per_device_train_batch_size",
+    "generation_batch_size",
+]:
+    print(f"{key}: {cfg.get(key)}")
+
+print("config_path:", config_path)
+PY
+echo "==================================="
+
 python -m train.train \
     --config configs/experiment_configs/llada_8b_instruct_dit_confidence_BL32_mixture_safe.yaml \
     --overwrite \
