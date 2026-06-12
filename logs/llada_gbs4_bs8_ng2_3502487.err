@@ -1,0 +1,18 @@
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/home/s2892215/msc_project/ml-rl-dllm/train/train.py", line 358, in <module>
+    grpo_config, model_config = parser.parse_args_and_config(
+                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/s2892215/msc_project/ml-rl-dllm/.venv/lib/python3.12/site-packages/trl/scripts/utils.py", line 220, in parse_args_and_config
+    output = self.parse_args_into_dataclasses(args=args, return_remaining_strings=return_remaining_strings)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/s2892215/msc_project/ml-rl-dllm/.venv/lib/python3.12/site-packages/transformers/hf_argparser.py", line 358, in parse_args_into_dataclasses
+    obj = dtype(**inputs)
+          ^^^^^^^^^^^^^^^
+  File "<string>", line 205, in __init__
+  File "/home/s2892215/msc_project/ml-rl-dllm/common/config.py", line 18, in __post_init__
+    super().__post_init__()
+  File "/home/s2892215/msc_project/ml-rl-dllm/.venv/lib/python3.12/site-packages/trl/trainer/grpo_config.py", line 548, in __post_init__
+    raise ValueError(
+ValueError: generation_batch_size (4) must be divisible by the global batch size (8).

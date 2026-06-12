@@ -1,0 +1,13 @@
+Loading checkpoint shards:   0%|          | 0/6 [00:00<?, ?it/s]Loading checkpoint shards: 100%|██████████| 6/6 [00:00<00:00, 314.79it/s]
+wandb: [wandb.login()] Loaded credentials for https://api.wandb.ai from WANDB_API_KEY.
+wandb: Currently logged in as: orkunkinay (orkunkinay-university-of-edinburgh-entrepreneurs-society) to https://api.wandb.ai. Use `wandb login --relogin` to force relogin
+wandb: Tracking run with wandb version 0.27.0
+wandb: Run data is saved locally in /home/s2892215/msc_project/ml-rl-dllm/wandb/run-20260612_040136-rmlu5wpr
+wandb: Run `wandb offline` to turn off syncing.
+wandb: Syncing run sweep_safe_gbs32_bs8_ng4
+wandb: ⭐️ View project at https://wandb.ai/orkunkinay-university-of-edinburgh-entrepreneurs-society/huggingface
+wandb: 🚀 View run at https://wandb.ai/orkunkinay-university-of-edinburgh-entrepreneurs-society/huggingface/runs/rmlu5wpr
+wandb: Detected [huggingface_hub.inference] in use.
+wandb: Use W&B Weave for improved LLM call tracing. Install Weave with `pip install weave` then add `import weave` to the top of your script.
+wandb: For more information, check out the docs at: https://weave-docs.wandb.ai
+  0%|          | 0/14973 [00:00<?, ?it/s]  0%|          | 1/14973 [05:34<1392:00:05, 334.71s/it]                                                         0%|          | 1/14973 [05:34<1392:00:05, 334.71s/it]  0%|          | 2/14973 [05:35<574:22:09, 138.12s/it]                                                         0%|          | 2/14973 [05:35<574:22:09, 138.12s/it]  0%|          | 3/14973 [11:10<949:16:38, 228.28s/it]                                                        0%|          | 3/14973 [11:10<949:16:38, 228.28s/it]  0%|          | 4/14973 [11:11<575:18:20, 138.36s/it]                                                        0%|          | 4/14973 [11:11<575:18:20, 138.36s/it]  0%|          | 5/14973 [16:42<863:41:30, 207.73s/it]                                                        0%|          | 5/14973 [16:42<863:41:30, 207.73s/it]  0%|          | 6/14973 [16:42<570:52:12, 137.31s/it]                                                        0%|          | 6/14973 [16:42<570:52:12, 137.31s/it][2026-06-12T04:21:02.033] error: *** JOB 3502506 ON saxa CANCELLED AT 2026-06-12T04:21:02 DUE TO TIME LIMIT ***
