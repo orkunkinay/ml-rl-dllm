@@ -1,9 +1,12 @@
 #!/bin/bash
-# Generates yaml variants of the safe config for a batch-size sweep and
+# Generates yaml variants of the BL256 config for a batch-size sweep and
 # submits one sbatch job per valid combination.
 #
 # Constraint (asserted in train/train.py): per_device_train_batch_size
 # must be divisible by num_generations, so invalid combos are skipped.
+# Constraint (asserted by TRL GRPOConfig): generation_batch_size must be
+# divisible by the global batch size. These jobs run one process/GPU, so the
+# global batch size is per_device_train_batch_size.
 set -euo pipefail
 
 cd "$(dirname "$0")"
@@ -29,8 +32,14 @@ for gbs in "${GENERATION_BATCH_SIZES[@]}"; do
         continue
       fi
 
+      if (( gbs % bs != 0 )); then
+        echo "SKIP  gbs=${gbs} bs=${bs} ng=${ng} (gbs not divisible by bs)"
+        skipped=$((skipped + 1))
+        continue
+      fi
+
       tag="gbs${gbs}_bs${bs}_ng${ng}"
-      cfg="$SWEEP_DIR/safe_${tag}.yaml"
+      cfg="$SWEEP_DIR/bl256_${tag}.yaml"
 
       sed \
         -e "s/^generation_batch_size:.*/generation_batch_size: ${gbs}/" \
@@ -40,7 +49,7 @@ for gbs in "${GENERATION_BATCH_SIZES[@]}"; do
 
       # Unique run_name so concurrent jobs don't share (and --overwrite
       # doesn't delete) each other's run directory under runs/.
-      printf '\nrun_name: sweep_safe_%s\n' "$tag" >> "$cfg"
+      printf '\nrun_name: sweep_bl256_%s\n' "$tag" >> "$cfg"
 
       if [ "$DRY_RUN" = "1" ]; then
         echo "DRY   would submit ${tag} -> ${cfg}"

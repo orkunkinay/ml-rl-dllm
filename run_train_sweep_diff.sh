@@ -57,6 +57,7 @@ for key in [
     "num_generations",
     "per_device_train_batch_size",
     "generation_batch_size",
+    "block_length",
     "run_name",
 ]:
     print(f"{key}: {cfg.get(key)}")
