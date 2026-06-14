@@ -4,6 +4,9 @@
 #
 # Constraint (asserted in train/train.py): per_device_train_batch_size
 # must be divisible by num_generations, so invalid combos are skipped.
+# Constraint (asserted by TRL GRPOConfig): generation_batch_size must be
+# divisible by the global batch size. These jobs run one process/GPU, so the
+# global batch size is per_device_train_batch_size.
 set -euo pipefail
 
 cd "$(dirname "$0")"
@@ -25,6 +28,12 @@ for gbs in "${GENERATION_BATCH_SIZES[@]}"; do
     for ng in "${NUM_GENERATIONS[@]}"; do
       if (( bs % ng != 0 )); then
         echo "SKIP  gbs=${gbs} bs=${bs} ng=${ng} (bs not divisible by ng)"
+        skipped=$((skipped + 1))
+        continue
+      fi
+
+      if (( gbs % bs != 0 )); then
+        echo "SKIP  gbs=${gbs} bs=${bs} ng=${ng} (gbs not divisible by bs)"
         skipped=$((skipped + 1))
         continue
       fi
