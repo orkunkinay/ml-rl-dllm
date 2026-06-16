@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=llada_diff_sweep
 #SBATCH --partition=Teaching
-#SBATCH --gres=gpu:3g.71gb:1
+#SBATCH --gres=gpu:h200_3g.71gb:1
 #SBATCH --output=logs/llada_diff_sweep_%j.out
 #SBATCH --error=logs/llada_diff_sweep_%j.err
 #SBATCH --time=00:20:00
