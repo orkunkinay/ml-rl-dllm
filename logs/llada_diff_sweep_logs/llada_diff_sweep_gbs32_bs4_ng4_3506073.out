@@ -1,0 +1,79 @@
+===== NODE / GPU INFO =====
+saxa.inf.ed.ac.uk
+Tue Jun 16 17:16:19 2026       
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 595.71.05              Driver Version: 595.71.05      CUDA Version: 13.2     |
++-----------------------------------------+------------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
+|   0  NVIDIA H200                    On  |   00000000:3B:00.0 Off |                   On |
+| N/A   40C    P0             80W /  700W |      87MiB / 143771MiB |     N/A      Default |
+|                                         |                        |              Enabled |
++-----------------------------------------+------------------------+----------------------+
+
++-----------------------------------------------------------------------------------------+
+| MIG devices:                                                                            |
++------------------+----------------------------------+-----------+-----------------------+
+| GPU  GI  CI  MIG |              Shared Memory-Usage |        Vol|        Shared         |
+|      ID  ID  Dev |                Shared BAR1-Usage | SM     Unc| CE ENC  DEC  OFA  JPG |
+|                  |                                  |        ECC|                       |
+|==================+==================================+===========+=======================|
+|  0    1   0   0  |              44MiB / 71424MiB    | 60      0 |  3   0    3    0    3 |
+|                  |               0MiB / 59237MiB    |           |                       |
++------------------+----------------------------------+-----------+-----------------------+
+
++-----------------------------------------------------------------------------------------+
+| Processes:                                                                              |
+|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |
+|        ID   ID                                                               Usage      |
+|=========================================================================================|
+|  No running processes found                                                             |
++-----------------------------------------------------------------------------------------+
+===========================
+CUDA available: True
+GPU: NVIDIA H200 MIG 3g.71gb
+GPU memory GB: 69.75
+===== TRAINING CONFIG SUMMARY =====
+num_generations: 4
+per_device_train_batch_size: 4
+generation_batch_size: 32
+block_length: 256
+run_name: sweep_bl256_gbs32_bs4_ng4
+config_path: configs/experiment_configs/sweep_diff/bl256_gbs32_bs4_ng4.yaml
+===================================
+=== Library Versions ===
+torch: 2.6.0+cu124
+transformers: 4.53.0
+accelerate: 1.4.0
+trl: 0.19.1
+flash_attn: 2.8.3
+========================
+train after model loading CUDA memory | device=NVIDIA H200 MIG 3g.71gb | allocated=14.93 GB | reserved=14.93 GB | peak_allocated=14.93 GB | peak_reserved=14.93 GB
+train after policy loading CUDA memory | device=NVIDIA H200 MIG 3g.71gb | allocated=14.93 GB | reserved=14.93 GB | peak_allocated=14.93 GB | peak_reserved=14.93 GB
+Policy type: dit_confidence
+Total policy parameters: 331,265
+Trainable policy parameters: 331,265
+[2026-06-16 17:21:57,769] [INFO] [real_accelerator.py:222:get_accelerator] Setting ds_accelerator to cuda (auto detect)
+train before first rollout step=0 CUDA memory | device=NVIDIA H200 MIG 3g.71gb | allocated=14.93 GB | reserved=14.93 GB | peak_allocated=14.93 GB | peak_reserved=14.93 GB
+train after first rollout step=0 CUDA memory | device=NVIDIA H200 MIG 3g.71gb | allocated=14.97 GB | reserved=30.67 GB | peak_allocated=24.20 GB | peak_reserved=30.67 GB
+Saved checkpoint-best at step 0 with train reward 0.0625
+train before checkpoint step=0 CUDA memory | device=NVIDIA H200 MIG 3g.71gb | allocated=14.97 GB | reserved=30.67 GB | peak_allocated=14.97 GB | peak_reserved=30.67 GB
+train step=1 CUDA memory | device=NVIDIA H200 MIG 3g.71gb | allocated=15.01 GB | reserved=33.29 GB | peak_allocated=33.10 GB | peak_reserved=34.09 GB
+{'loss': 0.0, 'grad_norm': 0.046528950333595276, 'learning_rate': 0.0, 'completion_length': 136.5625, 'zero_std_ratio': 0.875, 'effective_steps': 1.0, 'still_masked': 0.0, 'rewards/mixed_correctness_mult_reward_func': 0.0625, 'rewards/mixed_correctness_reward_func': 0.0625, 'reward': 0.0625, 'reward_std': 0.07216878235340118, 'mean_unmask_prob': 0.125571608543396, 'non_zero_unmask_prob': 1.0, 'max_unmask_prob': 0.1331792026758194, 'num_steps_mean': 46.1875, 'num_steps_std': 15.177311897277832, 'num_steps_min': 31.0, 'num_steps_max': 103.0, 'non_zero_bs_timesteps_mean': 0.6842507123947144, 'non_zero_bs_timesteps_std': 0.1467597782611847, 'non_zero_bs_timesteps_min': 0.291262149810791, 'non_zero_bs_timesteps_max': 0.90625, 'entropy': 0.3769685924053192, 'epoch': 0.0}
+{'loss': 0.0, 'grad_norm': 0.046528950333595276, 'learning_rate': 3.0000000000000004e-07, 'entropy': 0.3769685924053192, 'epoch': 0.0}
+{'loss': 0.0, 'grad_norm': 0.06300525367259979, 'learning_rate': 6.000000000000001e-07, 'completion_length': 139.0625, 'zero_std_ratio': 0.875, 'effective_steps': 3.0, 'still_masked': 0.0, 'rewards/mixed_correctness_mult_reward_func': 0.03125, 'rewards/mixed_correctness_reward_func': 0.03125, 'reward': 0.03125, 'reward_std': 0.0625, 'mean_unmask_prob': 0.12592487037181854, 'non_zero_unmask_prob': 1.0, 'max_unmask_prob': 0.13345712423324585, 'num_steps_mean': 44.375, 'num_steps_std': 10.505758285522461, 'num_steps_min': 29.0, 'num_steps_max': 68.0, 'non_zero_bs_timesteps_mean': 0.6972914934158325, 'non_zero_bs_timesteps_std': 0.134598046541214, 'non_zero_bs_timesteps_min': 0.4848484992980957, 'non_zero_bs_timesteps_max': 0.931034505367279, 'entropy': 0.37769997119903564, 'epoch': 0.0}
+{'loss': -0.0, 'grad_norm': 0.06293831765651703, 'learning_rate': 9e-07, 'entropy': 0.37752529978752136, 'epoch': 0.0}
+{'loss': 0.0, 'grad_norm': 0.13941609859466553, 'learning_rate': 1.2000000000000002e-06, 'completion_length': 133.90625, 'zero_std_ratio': 0.75, 'effective_steps': 5.0, 'still_masked': 0.0, 'rewards/mixed_correctness_mult_reward_func': 0.0625, 'rewards/mixed_correctness_reward_func': 0.0625, 'reward': 0.0625, 'reward_std': 0.125, 'mean_unmask_prob': 0.1251436471939087, 'non_zero_unmask_prob': 1.0, 'max_unmask_prob': 0.13288968801498413, 'num_steps_mean': 43.875, 'num_steps_std': 9.14312744140625, 'num_steps_min': 30.0, 'num_steps_max': 72.0, 'non_zero_bs_timesteps_mean': 0.7109566330909729, 'non_zero_bs_timesteps_std': 0.12408406287431717, 'non_zero_bs_timesteps_min': 0.4027777910232544, 'non_zero_bs_timesteps_max': 0.9677419066429138, 'entropy': 0.3761749863624573, 'epoch': 0.0}
+{'loss': -0.0, 'grad_norm': 0.13864365220069885, 'learning_rate': 1.5e-06, 'entropy': 0.3763892650604248, 'epoch': 0.0}
+Saved checkpoint-best at step 6 with train reward 0.078125
+train before checkpoint step=6 CUDA memory | device=NVIDIA H200 MIG 3g.71gb | allocated=15.01 GB | reserved=38.58 GB | peak_allocated=33.14 GB | peak_reserved=42.10 GB
+{'loss': -0.0, 'grad_norm': 0.18573687970638275, 'learning_rate': 1.8e-06, 'completion_length': 136.5, 'zero_std_ratio': 0.625, 'effective_steps': 7.0, 'still_masked': 0.0, 'rewards/mixed_correctness_mult_reward_func': 0.15625, 'rewards/mixed_correctness_reward_func': 0.15625, 'reward': 0.15625, 'reward_std': 0.20683756470680237, 'mean_unmask_prob': 0.1258053481578827, 'non_zero_unmask_prob': 1.0, 'max_unmask_prob': 0.13348084688186646, 'num_steps_mean': 43.375, 'num_steps_std': 7.236778736114502, 'num_steps_min': 32.0, 'num_steps_max': 60.0, 'non_zero_bs_timesteps_mean': 0.7051646709442139, 'non_zero_bs_timesteps_std': 0.11559067666530609, 'non_zero_bs_timesteps_min': 0.5, 'non_zero_bs_timesteps_max': 0.90625, 'entropy': 0.37749019265174866, 'epoch': 0.0}
+{'loss': 0.0, 'grad_norm': 0.18588337302207947, 'learning_rate': 2.1000000000000002e-06, 'entropy': 0.3775060772895813, 'epoch': 0.0}
+Saved checkpoint-best at step 8 with train reward 0.08125
+train before checkpoint step=8 CUDA memory | device=NVIDIA H200 MIG 3g.71gb | allocated=15.01 GB | reserved=36.59 GB | peak_allocated=25.57 GB | peak_reserved=38.58 GB
+{'loss': 0.0, 'grad_norm': 0.06180032342672348, 'learning_rate': 2.4000000000000003e-06, 'completion_length': 131.03125, 'zero_std_ratio': 0.75, 'effective_steps': 9.0, 'still_masked': 0.0, 'rewards/mixed_correctness_mult_reward_func': 0.09375, 'rewards/mixed_correctness_reward_func': 0.09375, 'reward': 0.09375, 'reward_std': 0.13466878235340118, 'mean_unmask_prob': 0.12621232867240906, 'non_zero_unmask_prob': 1.0, 'max_unmask_prob': 0.13354574143886566, 'num_steps_mean': 43.5625, 'num_steps_std': 7.724854946136475, 'num_steps_min': 34.0, 'num_steps_max': 68.0, 'non_zero_bs_timesteps_mean': 0.6925489902496338, 'non_zero_bs_timesteps_std': 0.10034709423780441, 'non_zero_bs_timesteps_min': 0.44117647409439087, 'non_zero_bs_timesteps_max': 0.8571428656578064, 'entropy': 0.37811699509620667, 'epoch': 0.0}
+{'loss': -0.0, 'grad_norm': 0.060465965420007706, 'learning_rate': 2.7e-06, 'entropy': 0.3777020275592804, 'epoch': 0.0}
+Saved checkpoint-best at step 10 with train reward 0.08854166666666667
+train before checkpoint step=10 CUDA memory | device=NVIDIA H200 MIG 3g.71gb | allocated=15.01 GB | reserved=38.01 GB | peak_allocated=26.97 GB | peak_reserved=38.01 GB
