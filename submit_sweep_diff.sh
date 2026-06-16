@@ -16,7 +16,7 @@ SWEEP_DIR=configs/experiment_configs/sweep_diff
 mkdir -p "$SWEEP_DIR" logs
 
 GENERATION_BATCH_SIZES=(4 8 16 32)
-TRAIN_BATCH_SIZES=(2 4 8)
+TRAIN_BATCH_SIZES=(2 4 8 16)
 NUM_GENERATIONS=(2 4 8)
 
 DRY_RUN="${DRY_RUN:-0}"
