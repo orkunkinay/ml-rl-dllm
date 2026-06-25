@@ -13,6 +13,8 @@ import shutil
 import socket
 import subprocess
 import time
+import tempfile
+import warnings
 from dataclasses import asdict, is_dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -20,6 +22,7 @@ from typing import Any
 
 import numpy as np
 import torch
+from safetensors import safe_open
 from transformers import TrainerCallback
 from transformers import TrainerControl
 from transformers import TrainerState
@@ -36,12 +39,24 @@ def utc_now() -> str:
 def atomic_write_text(path: str | Path, text: str) -> None:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = path.with_name(path.name + ".tmp")
-    with open(tmp_path, "w") as f:
-        f.write(text)
-        f.flush()
-        os.fsync(f.fileno())
-    os.replace(tmp_path, path)
+    fd, tmp_name = tempfile.mkstemp(
+        dir=str(path.parent),
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+    )
+    tmp_path = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.write(text)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, path)
+    except Exception:
+        try:
+            os.unlink(tmp_path)
+        except FileNotFoundError:
+            pass
+        raise
 
 
 def atomic_write_json(path: str | Path, data: dict[str, Any]) -> None:
@@ -128,11 +143,24 @@ def restore_rng_state(state: dict[str, Any] | None) -> None:
 def atomic_torch_save(obj: Any, path: str | Path) -> None:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = path.parent / "checkpoint.tmp"
-    torch.save(obj, tmp_path)
-    with open(tmp_path, "rb") as f:
-        os.fsync(f.fileno())
-    os.replace(tmp_path, path)
+    fd, tmp_name = tempfile.mkstemp(
+        dir=str(path.parent),
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+    )
+    tmp_path = Path(tmp_name)
+    try:
+        os.close(fd)
+        torch.save(obj, tmp_path)
+        with open(tmp_path, "rb") as f:
+            os.fsync(f.fileno())
+        os.replace(tmp_path, path)
+    except Exception:
+        try:
+            os.unlink(tmp_path)
+        except FileNotFoundError:
+            pass
+        raise
 
 
 def config_to_dict(config: Any) -> dict[str, Any]:
@@ -206,17 +234,79 @@ def find_latest_hf_checkpoint(run_dir: str | Path) -> Path | None:
     return sorted(candidates)[-1][1]
 
 
+def _checkpoint_weight_files(checkpoint_dir: Path) -> list[Path]:
+    index_path = checkpoint_dir / "model.safetensors.index.json"
+    if index_path.exists():
+        with open(index_path) as f:
+            payload = json.load(f)
+        shard_names = sorted(set(payload.get("weight_map", {}).values()))
+        return [checkpoint_dir / name for name in shard_names]
+
+    single_path = checkpoint_dir / "model.safetensors"
+    if single_path.exists():
+        return [single_path]
+
+    return sorted(checkpoint_dir.glob("*.safetensors"))
+
+
+def _is_readable_safetensors_file(path: Path) -> bool:
+    try:
+        with safe_open(str(path), framework="pt", device="cpu") as handle:
+            list(handle.keys())
+        return True
+    except Exception:
+        return False
+
+
+def _is_valid_hf_checkpoint(checkpoint_dir: Path) -> bool:
+    checkpoint_dir = Path(checkpoint_dir)
+    if not checkpoint_dir.is_dir():
+        return False
+    if not (checkpoint_dir / "trainer_state.json").exists():
+        return False
+
+    weight_files = _checkpoint_weight_files(checkpoint_dir)
+    if not weight_files:
+        return False
+
+    return all(path.exists() and _is_readable_safetensors_file(path) for path in weight_files)
+
+
 def resolve_resume_checkpoint(resume: str | None, run_dir: str | Path) -> Path | None:
     if not resume or str(resume).lower() in {"false", "none", "no"}:
         return None
     if resume == "auto":
-        return find_latest_hf_checkpoint(run_dir)
+        run_dir = Path(run_dir)
+        candidates = []
+        for path in run_dir.glob("checkpoint-*"):
+            if not path.is_dir() or path.name == "checkpoint-best":
+                continue
+            try:
+                step = int(path.name.split("-")[1])
+            except (IndexError, ValueError):
+                continue
+            candidates.append((step, path))
+
+        for _, checkpoint_dir in sorted(candidates, reverse=True):
+            if _is_valid_hf_checkpoint(checkpoint_dir):
+                return checkpoint_dir
+            warnings.warn(
+                f"Skipping unreadable checkpoint at {checkpoint_dir}; it appears to be incomplete or corrupted."
+            )
+        return None
+
     path = Path(resume)
     if path.name.endswith(".pt") and path.exists():
         payload = torch.load(path, map_location="cpu", weights_only=False)
         hf_path = payload.get("hf_checkpoint_path")
         if hf_path:
-            return Path(hf_path)
+            path = Path(hf_path)
+
+    if path.is_dir() and not _is_valid_hf_checkpoint(path):
+        raise ValueError(
+            f"Resolved resume checkpoint {path} is not a complete Hugging Face checkpoint."
+        )
+
     return path
 
 
@@ -248,7 +338,10 @@ def write_progress(
     }
     if extra:
         progress.update(extra)
-    atomic_write_json(Path(run_dir) / "progress.json", progress)
+    try:
+        atomic_write_json(Path(run_dir) / "progress.json", progress)
+    except Exception as exc:
+        warnings.warn(f"Failed to write progress.json: {exc}")
 
 
 def checkpoint_metadata(
