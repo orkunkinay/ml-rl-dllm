@@ -7,14 +7,27 @@
 #SBATCH --time=00:20:00
 #SBATCH --mem=32G
 
+set -euo pipefail
+
 # Usage: sbatch run_train_sweep_diff.sh <config_path>
-CONFIG_PATH="$1"
+REPO_DIR="${REPO_DIR:-$HOME/msc_project/ml-rl-dllm-timing-test}"
+CONFIG_PATH="${1:-}"
 if [ -z "$CONFIG_PATH" ]; then
     echo "ERROR: no config path given. Usage: sbatch run_train_sweep_diff.sh <config_path>"
     exit 1
 fi
 
-cd ~/msc_project/ml-rl-dllm
+cd "$REPO_DIR"
+echo "repo_dir: $(pwd)"
+echo "git_commit: $(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
+
+if [ ! -f "$CONFIG_PATH" ]; then
+    echo "ERROR: config path does not exist after cd to $(pwd): $CONFIG_PATH"
+    echo "Available sweep_diff configs:"
+    find configs/experiment_configs/sweep_diff -maxdepth 1 -type f -name '*.yaml' -print 2>/dev/null | sort || true
+    exit 2
+fi
+
 source .venv/bin/activate
 export PYTHONNOUSERSITE=1
 
