@@ -15,8 +15,8 @@ BASE_CONFIG=configs/experiment_configs/llada_8b_instruct_dit_confidence_BL32_mix
 SWEEP_DIR=configs/experiment_configs/sweep
 mkdir -p "$SWEEP_DIR" logs
 
-GENERATION_BATCH_SIZES=(4 8 16 32)
-TRAIN_BATCH_SIZES=(2 4 8)
+GENERATION_BATCH_SIZES=(4 8 16 32 64 128)
+TRAIN_BATCH_SIZES=(2 4 8 16 32)
 NUM_GENERATIONS=(2 4 8)
 
 DRY_RUN="${DRY_RUN:-0}"

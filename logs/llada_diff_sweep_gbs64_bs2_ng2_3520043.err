@@ -1,0 +1,16 @@
+Traceback (most recent call last):
+  File "<stdin>", line 7, in <module>
+  File "/usr/lib/python3.12/pathlib.py", line 1015, in open
+    return io.open(self, mode, buffering, encoding, errors, newline)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: 'configs/experiment_configs/sweep_diff/bl256_gbs64_bs2_ng2.yaml'
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/home/s2892215/msc_project/ml-rl-dllm/train/train.py", line 358, in <module>
+    grpo_config, model_config = parser.parse_args_and_config(
+                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/s2892215/msc_project/ml-rl-dllm/.venv/lib/python3.12/site-packages/trl/scripts/utils.py", line 203, in parse_args_and_config
+    with open(config_path) as yaml_file:
+         ^^^^^^^^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: 'configs/experiment_configs/sweep_diff/bl256_gbs64_bs2_ng2.yaml'

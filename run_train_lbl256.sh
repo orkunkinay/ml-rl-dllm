@@ -3,9 +3,9 @@
 #SBATCH --partition=Teaching
 #SBATCH --output=logs/llada_train_%j.out
 #SBATCH --error=logs/llada_train_%j.err
-#SBATCH --time=48:00:00
+#SBATCH --time=00:20:00
 #SBATCH --mem=32G
-#SBATCH --gres=gpu:h200_3g.71gb:1
+#SBATCH --gres=gpu:h200:1
 
 cd ~/msc_project/ml-rl-dllm
 source .venv/bin/activate
