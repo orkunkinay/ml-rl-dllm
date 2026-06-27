@@ -28,7 +28,9 @@ if [ ! -f "$CONFIG_PATH" ]; then
     exit 2
 fi
 
-source .venv/bin/activate
+VENV_DIR="${VENV_DIR:-$(dirname "$REPO_DIR")/ml-rl-dllm}"
+source "$VENV_DIR/bin/activate"
+
 export PYTHONNOUSERSITE=1
 
 export HF_TOKEN=$(cat ~/.hf_token)
