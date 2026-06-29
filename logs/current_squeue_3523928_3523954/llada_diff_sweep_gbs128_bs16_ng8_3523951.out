@@ -1,0 +1,54 @@
+repo_dir: /home/s2892215/msc_project/ml-rl-dllm-timing-test
+git_commit: 2cece59
+===== NODE / GPU INFO =====
+saxa.inf.ed.ac.uk
+Mon Jun 29 22:34:50 2026       
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 595.71.05              Driver Version: 595.71.05      CUDA Version: 13.2     |
++-----------------------------------------+------------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
+|   0  NVIDIA H200                    On  |   00000000:19:00.0 Off |                    0 |
+| N/A   56C    P0            140W /  700W |       0MiB / 143771MiB |      0%      Default |
+|                                         |                        |             Disabled |
++-----------------------------------------+------------------------+----------------------+
+
++-----------------------------------------------------------------------------------------+
+| Processes:                                                                              |
+|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |
+|        ID   ID                                                               Usage      |
+|=========================================================================================|
+|  No running processes found                                                             |
++-----------------------------------------------------------------------------------------+
+===========================
+CUDA available: True
+GPU: NVIDIA H200
+GPU memory GB: 139.80267333984375
+===== TRAINING CONFIG SUMMARY =====
+num_generations: 8
+per_device_train_batch_size: 16
+generation_batch_size: 128
+block_length: 256
+run_name: sweep_bl256_gbs128_bs16_ng8
+config_path: configs/experiment_configs/sweep_diff/bl256_gbs128_bs16_ng8.yaml
+===================================
+=== Library Versions ===
+torch: 2.6.0+cu124
+transformers: 4.53.0
+accelerate: 1.4.0
+trl: 0.19.1
+flash_attn: 2.8.3
+========================
+train after model loading CUDA memory | device=NVIDIA H200 | allocated=14.93 GB | reserved=14.93 GB | peak_allocated=14.93 GB | peak_reserved=14.93 GB
+train after policy loading CUDA memory | device=NVIDIA H200 | allocated=14.93 GB | reserved=14.93 GB | peak_allocated=14.93 GB | peak_reserved=14.93 GB
+Policy type: dit_confidence
+Total policy parameters: 331,265
+Trainable policy parameters: 331,265
+[2026-06-29 22:38:54,549] [INFO] [real_accelerator.py:222:get_accelerator] Setting ds_accelerator to cuda (auto detect)
+train before first rollout step=0 CUDA memory | device=NVIDIA H200 | allocated=14.93 GB | reserved=14.93 GB | peak_allocated=14.93 GB | peak_reserved=14.93 GB
+train after first rollout step=0 CUDA memory | device=NVIDIA H200 | allocated=15.00 GB | reserved=77.79 GB | peak_allocated=51.90 GB | peak_reserved=77.79 GB
+Saved checkpoint-best at step 0 with train reward 0.1171875
+train before checkpoint step=0 CUDA memory | device=NVIDIA H200 | allocated=15.00 GB | reserved=77.79 GB | peak_allocated=15.00 GB | peak_reserved=77.79 GB
+train step=1 CUDA memory | device=NVIDIA H200 | allocated=15.03 GB | reserved=89.18 GB | peak_allocated=87.51 GB | peak_reserved=90.79 GB
