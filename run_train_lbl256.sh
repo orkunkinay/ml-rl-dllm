@@ -7,6 +7,8 @@
 #SBATCH --mem=32G
 #SBATCH --gres=gpu:h200_3g.71gb:1
 
+set -euo pipefail
+
 cd ~/msc_project/ml-rl-dllm
 source .venv/bin/activate
 export PYTHONNOUSERSITE=1
@@ -34,6 +36,10 @@ if torch.cuda.is_available():
 else:
     raise RuntimeError("CUDA unavailable")
 PY
+
+echo "===== CHECKPOINT / RESUME TESTS ====="
+python -m pytest tests/test_run_state.py -q
+echo "====================================="
 
 python -m train.train \
     --config configs/experiment_configs/llada_8b_instruct_dit_confidence_BL256_mixture.yaml \

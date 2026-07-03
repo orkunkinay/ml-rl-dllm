@@ -27,6 +27,9 @@ from transformers import TrainerCallback
 from transformers import TrainerControl
 from transformers import TrainerState
 from transformers import TrainingArguments
+from transformers.trainer import OPTIMIZER_NAME
+from transformers.trainer import SCALER_NAME
+from transformers.trainer import SCHEDULER_NAME
 
 from common.memory import get_cuda_memory_stats
 from common.memory import log_cuda_memory
@@ -246,10 +249,16 @@ def _checkpoint_weight_files(checkpoint_dir: Path) -> list[Path]:
     if single_path.exists():
         return [single_path]
 
+    bin_path = checkpoint_dir / "pytorch_model.bin"
+    if bin_path.exists():
+        return [bin_path]
+
     return sorted(checkpoint_dir.glob("*.safetensors"))
 
 
 def _is_readable_safetensors_file(path: Path) -> bool:
+    if path.suffix != ".safetensors":
+        return path.exists() and path.stat().st_size > 0
     try:
         with safe_open(str(path), framework="pt", device="cpu") as handle:
             list(handle.keys())
@@ -272,6 +281,41 @@ def _is_valid_hf_checkpoint(checkpoint_dir: Path) -> bool:
     return all(path.exists() and _is_readable_safetensors_file(path) for path in weight_files)
 
 
+def _step_from_checkpoint_name(path: Path) -> int | None:
+    try:
+        return int(path.name.split("-")[1])
+    except (IndexError, ValueError):
+        return None
+
+
+def _sidecar_resume_candidate(run_dir: Path) -> tuple[int, Path] | None:
+    sidecar = run_dir / "checkpoints" / "checkpoint_latest.pt"
+    if not sidecar.exists():
+        return None
+
+    try:
+        payload = torch.load(sidecar, map_location="cpu", weights_only=False)
+    except Exception as exc:
+        warnings.warn(f"Skipping unreadable sidecar checkpoint at {sidecar}: {exc}")
+        return None
+
+    hf_path = payload.get("hf_checkpoint_path")
+    if not hf_path:
+        return None
+
+    checkpoint_dir = Path(hf_path)
+    if not checkpoint_dir.is_absolute():
+        checkpoint_dir = run_dir / checkpoint_dir
+    step = payload.get("global_step")
+    if step is None:
+        step = _step_from_checkpoint_name(checkpoint_dir)
+    try:
+        step = int(step)
+    except (TypeError, ValueError):
+        step = -1
+    return step, checkpoint_dir
+
+
 def resolve_resume_checkpoint(resume: str | None, run_dir: str | Path) -> Path | None:
     if not resume or str(resume).lower() in {"false", "none", "no"}:
         return None
@@ -281,13 +325,21 @@ def resolve_resume_checkpoint(resume: str | None, run_dir: str | Path) -> Path |
         for path in run_dir.glob("checkpoint-*"):
             if not path.is_dir() or path.name == "checkpoint-best":
                 continue
-            try:
-                step = int(path.name.split("-")[1])
-            except (IndexError, ValueError):
+            step = _step_from_checkpoint_name(path)
+            if step is None:
                 continue
             candidates.append((step, path))
 
+        sidecar_candidate = _sidecar_resume_candidate(run_dir)
+        if sidecar_candidate is not None:
+            candidates.append(sidecar_candidate)
+
+        seen = set()
         for _, checkpoint_dir in sorted(candidates, reverse=True):
+            checkpoint_dir = checkpoint_dir.resolve()
+            if checkpoint_dir in seen:
+                continue
+            seen.add(checkpoint_dir)
             if _is_valid_hf_checkpoint(checkpoint_dir):
                 return checkpoint_dir
             warnings.warn(
@@ -561,12 +613,22 @@ class ClusterStateCallback(TrainerCallback):
             alias_name or f"checkpoint_step_{state.global_step}.pt"
         )
         latest_path = ckpt_dir / "checkpoint_latest.pt"
-        atomic_torch_save(payload, step_path)
-        if update_latest:
-            atomic_torch_save(payload, latest_path)
-            self.last_checkpoint = str(latest_path.relative_to(self.run_dir))
-        else:
-            self.last_checkpoint = str(step_path.relative_to(self.run_dir))
+        checkpoint_error = None
+        try:
+            atomic_torch_save(payload, step_path)
+            if update_latest:
+                atomic_torch_save(payload, latest_path)
+                self.last_checkpoint = str(latest_path.relative_to(self.run_dir))
+            else:
+                self.last_checkpoint = str(step_path.relative_to(self.run_dir))
+        except Exception as exc:
+            checkpoint_error = str(exc)
+            self.latest_metrics["sidecar_checkpoint_error"] = checkpoint_error
+            warnings.warn(
+                "Failed to write sidecar checkpoint "
+                f"{step_path}: {exc}. Training will continue because the "
+                "Hugging Face checkpoint directory is the authoritative resume source."
+            )
         write_progress(
             self.run_dir,
             "running",
@@ -578,6 +640,11 @@ class ClusterStateCallback(TrainerCallback):
             completed_fraction=self._completed_fraction(state),
             last_checkpoint=self.last_checkpoint,
             latest_metrics=self.latest_metrics,
+            extra=(
+                {"sidecar_checkpoint_error": checkpoint_error}
+                if checkpoint_error
+                else None
+            ),
         )
 
     def on_train_end(
@@ -613,6 +680,27 @@ class ClusterStateCallback(TrainerCallback):
         checkpoint_dir = self.run_dir / f"checkpoint-emergency-{step}"
         checkpoint_dir.mkdir(parents=True, exist_ok=True)
         trainer.save_model(str(checkpoint_dir))
+
+        if hasattr(trainer, "_save_optimizer_and_scheduler"):
+            trainer._save_optimizer_and_scheduler(str(checkpoint_dir))
+        else:
+            optimizer = getattr(trainer, "optimizer", None)
+            scheduler = getattr(trainer, "lr_scheduler", None)
+            if optimizer is not None:
+                atomic_torch_save(optimizer.state_dict(), checkpoint_dir / OPTIMIZER_NAME)
+            if scheduler is not None and hasattr(scheduler, "state_dict"):
+                atomic_torch_save(scheduler.state_dict(), checkpoint_dir / SCHEDULER_NAME)
+
+        if hasattr(trainer, "_save_scaler"):
+            trainer._save_scaler(str(checkpoint_dir))
+        else:
+            scaler = getattr(trainer, "scaler", None)
+            if scaler is not None and hasattr(scaler, "state_dict"):
+                atomic_torch_save(scaler.state_dict(), checkpoint_dir / SCALER_NAME)
+
+        if hasattr(trainer, "_save_rng_state"):
+            trainer._save_rng_state(str(checkpoint_dir))
+
         state.save_to_json(str(checkpoint_dir / "trainer_state.json"))
         payload = checkpoint_metadata(
             model=getattr(trainer, "model", None),
