@@ -248,6 +248,15 @@ def test_resolve_resume_checkpoint_from_sidecar(tmp_path):
     assert resolved == hf_checkpoint
 
 
+def test_resolve_resume_checkpoint_from_sidecar_relative_path(tmp_path):
+    hf_checkpoint = write_valid_hf_checkpoint(tmp_path / "checkpoint-12", value=12)
+    sidecar = tmp_path / "checkpoints" / "checkpoint_latest.pt"
+    atomic_torch_save({"hf_checkpoint_path": "checkpoint-12"}, sidecar)
+
+    resolved = resolve_resume_checkpoint(str(sidecar), tmp_path)
+    assert resolved == hf_checkpoint
+
+
 def test_prepare_local_run_dir_requires_resume_or_overwrite_for_existing_run(tmp_path):
     run_dir = prepare_local_run_dir(
         DummyConfig(), resume=None, run_root=tmp_path, run_name="existing"

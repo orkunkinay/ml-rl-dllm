@@ -319,8 +319,8 @@ def _sidecar_resume_candidate(run_dir: Path) -> tuple[int, Path] | None:
 def resolve_resume_checkpoint(resume: str | None, run_dir: str | Path) -> Path | None:
     if not resume or str(resume).lower() in {"false", "none", "no"}:
         return None
+    run_dir = Path(run_dir)
     if resume == "auto":
-        run_dir = Path(run_dir)
         candidates = []
         for path in run_dir.glob("checkpoint-*"):
             if not path.is_dir() or path.name == "checkpoint-best":
@@ -353,6 +353,8 @@ def resolve_resume_checkpoint(resume: str | None, run_dir: str | Path) -> Path |
         hf_path = payload.get("hf_checkpoint_path")
         if hf_path:
             path = Path(hf_path)
+            if not path.is_absolute():
+                path = run_dir / path
 
     if path.is_dir() and not _is_valid_hf_checkpoint(path):
         raise ValueError(
