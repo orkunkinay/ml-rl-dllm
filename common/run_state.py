@@ -282,30 +282,55 @@ def _is_valid_hf_checkpoint(checkpoint_dir: Path) -> bool:
 
 
 def _step_from_checkpoint_name(path: Path) -> int | None:
+    prefix = "checkpoint-"
+    if not path.name.startswith(prefix):
+        return None
+    suffix = path.name[len(prefix) :]
+    if suffix.startswith("emergency-"):
+        suffix = suffix[len("emergency-") :]
     try:
-        return int(path.name.split("-")[1])
-    except (IndexError, ValueError):
+        return int(suffix)
+    except ValueError:
         return None
 
 
-def _sidecar_resume_candidate(run_dir: Path) -> tuple[int, Path] | None:
-    sidecar = run_dir / "checkpoints" / "checkpoint_latest.pt"
-    if not sidecar.exists():
-        return None
+def _resolve_checkpoint_path(path: str | Path, run_dir: Path) -> Path:
+    path = Path(path)
+    if not path.is_absolute():
+        path = run_dir / path
+    return path.resolve()
 
+
+def _load_sidecar_checkpoint(sidecar: Path) -> dict[str, Any] | None:
     try:
         payload = torch.load(sidecar, map_location="cpu", weights_only=False)
     except Exception as exc:
-        warnings.warn(f"Skipping unreadable sidecar checkpoint at {sidecar}: {exc}")
+        warnings.warn(
+            f"Skipping unreadable sidecar checkpoint at {sidecar}: {exc}",
+            stacklevel=2,
+        )
+        return None
+    if not isinstance(payload, dict):
+        warnings.warn(
+            f"Skipping unreadable sidecar checkpoint at {sidecar}: expected a dict.",
+            stacklevel=2,
+        )
+        return None
+    return payload
+
+
+def _sidecar_resume_candidate(sidecar: Path, run_dir: Path) -> tuple[int, Path] | None:
+    if not sidecar.exists():
+        return None
+    payload = _load_sidecar_checkpoint(sidecar)
+    if payload is None:
         return None
 
     hf_path = payload.get("hf_checkpoint_path")
     if not hf_path:
         return None
 
-    checkpoint_dir = Path(hf_path)
-    if not checkpoint_dir.is_absolute():
-        checkpoint_dir = run_dir / checkpoint_dir
+    checkpoint_dir = _resolve_checkpoint_path(hf_path, run_dir)
     step = payload.get("global_step")
     if step is None:
         step = _step_from_checkpoint_name(checkpoint_dir)
@@ -319,7 +344,7 @@ def _sidecar_resume_candidate(run_dir: Path) -> tuple[int, Path] | None:
 def resolve_resume_checkpoint(resume: str | None, run_dir: str | Path) -> Path | None:
     if not resume or str(resume).lower() in {"false", "none", "no"}:
         return None
-    run_dir = Path(run_dir)
+    run_dir = Path(run_dir).resolve()
     if resume == "auto":
         candidates = []
         for path in run_dir.glob("checkpoint-*"):
@@ -328,14 +353,19 @@ def resolve_resume_checkpoint(resume: str | None, run_dir: str | Path) -> Path |
             step = _step_from_checkpoint_name(path)
             if step is None:
                 continue
-            candidates.append((step, path))
+            candidates.append((step, path.resolve()))
 
-        sidecar_candidate = _sidecar_resume_candidate(run_dir)
+        sidecar_candidate = _sidecar_resume_candidate(
+            run_dir / "checkpoints" / "checkpoint_latest.pt",
+            run_dir,
+        )
         if sidecar_candidate is not None:
             candidates.append(sidecar_candidate)
 
         seen = set()
-        for _, checkpoint_dir in sorted(candidates, reverse=True):
+        for _, checkpoint_dir in sorted(
+            candidates, key=lambda item: item[0], reverse=True
+        ):
             checkpoint_dir = checkpoint_dir.resolve()
             if checkpoint_dir in seen:
                 continue
@@ -347,21 +377,19 @@ def resolve_resume_checkpoint(resume: str | None, run_dir: str | Path) -> Path |
             )
         return None
 
-    path = Path(resume)
-    if path.name.endswith(".pt") and path.exists():
+    path = _resolve_checkpoint_path(resume, run_dir)
+    if path.suffix == ".pt" and path.exists():
         payload = torch.load(path, map_location="cpu", weights_only=False)
         hf_path = payload.get("hf_checkpoint_path")
         if hf_path:
-            path = Path(hf_path)
-            if not path.is_absolute():
-                path = run_dir / path
+            path = _resolve_checkpoint_path(hf_path, run_dir)
 
     if path.is_dir() and not _is_valid_hf_checkpoint(path):
         raise ValueError(
             f"Resolved resume checkpoint {path} is not a complete Hugging Face checkpoint."
         )
 
-    return path
+    return path.resolve()
 
 
 def write_progress(
