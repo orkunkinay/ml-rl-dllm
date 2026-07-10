@@ -834,7 +834,12 @@ if __name__ == "__main__":
     dataloader = DataLoader(
         dataset,
         batch_size=args.batch_size,
-        sampler=CustomDistributedSampler(dataset, shuffle=False),
+        sampler=CustomDistributedSampler(
+            dataset,
+            num_replicas=accelerator.num_processes,
+            rank=accelerator.process_index,
+            shuffle=False,
+        ),
         collate_fn=collate_fn,
     )
 
