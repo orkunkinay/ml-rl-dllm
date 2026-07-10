@@ -28,13 +28,50 @@ if command -v module >/dev/null 2>&1; then
 fi
 
 CONFIG_PATH="${CONFIG_PATH:-configs/experiment_configs/llada_8b_instruct_dit_confidence_BL256_mixture.yaml}"
-RUN_PATH="${RUN_PATH:-runs/paper_llada_bl256_alpha_0.0_seed_123}"
+RUN_PATH="${RUN_PATH:-}"
 SAVE_PATH="${SAVE_PATH:-eval_results}"
 CHECKPOINTS="${CHECKPOINTS:-last}"
 DATASETS="${DATASETS:-gsm8k}"
 TEMPERATURES="${TEMPERATURES:-1.0}"
 SAMPLING_MODE="${SAMPLING_MODE:-bernoulli-argmax}"
 SEEDS="${SEEDS:-42,43,44}"
+
+if [[ -z "$RUN_PATH" ]]; then
+    RUN_PATH="$(
+        python - <<'PY'
+from pathlib import Path
+
+preferred = [
+    Path("runs/paper_llada_bl256_alpha_0.0_seed_123"),
+    Path("runs/paper_llada_bl256_alpha_0_seed_123"),
+    Path("outputs/my_experiment"),
+]
+
+def checkpoint_files(run_dir: Path):
+    return list(run_dir.glob("checkpoint-*/model.safetensors"))
+
+for run_dir in preferred:
+    if checkpoint_files(run_dir):
+        print(run_dir)
+        raise SystemExit
+
+candidates = []
+for root in (Path("runs"), Path("outputs")):
+    if not root.exists():
+        continue
+    for model_file in root.glob("**/checkpoint-*/model.safetensors"):
+        run_dir = model_file.parent.parent
+        try:
+            mtime = model_file.stat().st_mtime
+        except OSError:
+            continue
+        candidates.append((mtime, run_dir))
+
+if candidates:
+    print(max(candidates)[1])
+PY
+    )"
+fi
 
 echo "===== NODE / GPU INFO ====="
 hostname
@@ -53,8 +90,9 @@ echo "seeds: $SEEDS"
 echo "======================="
 
 if [[ ! -d "$RUN_PATH" ]]; then
-    echo "Run directory not found: $RUN_PATH" >&2
-    echo "Set RUN_PATH=/path/to/the/training/run if run_train_lbl256.sh wrote elsewhere." >&2
+    echo "Run directory not found." >&2
+    echo "Set RUN_PATH=/path/to/the/training/run, for example RUN_PATH=outputs/my_experiment." >&2
+    echo "Searched default checkpoint roots under runs/ and outputs/." >&2
     exit 1
 fi
 
