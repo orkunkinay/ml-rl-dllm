@@ -3,7 +3,7 @@
 #SBATCH --partition=Teaching
 #SBATCH --output=logs/llada_eval_lbl256_%j.out
 #SBATCH --error=logs/llada_eval_lbl256_%j.err
-#SBATCH --time=24:00:00
+#SBATCH --time=48:00:00
 #SBATCH --mem=32G
 #SBATCH --gres=gpu:h200_3g.71gb:1
 
