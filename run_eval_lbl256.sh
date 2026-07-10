@@ -42,6 +42,7 @@ if [[ -z "$RUN_PATH" ]]; then
 from pathlib import Path
 
 preferred = [
+    Path("runs/trainer_output"),
     Path("runs/paper_llada_bl256_alpha_0.0_seed_123"),
     Path("runs/paper_llada_bl256_alpha_0_seed_123"),
     Path("outputs/my_experiment"),
