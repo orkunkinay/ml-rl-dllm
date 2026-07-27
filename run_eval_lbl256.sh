@@ -9,10 +9,29 @@
 
 set -euo pipefail
 
-PROJECT_DIR="${PROJECT_DIR:-$HOME/msc_project/ml-rl-dllm}"
+if [[ -z "${PROJECT_DIR:-}" ]]; then
+    if [[ -n "${SLURM_SUBMIT_DIR:-}" ]]; then
+        PROJECT_DIR="$SLURM_SUBMIT_DIR"
+    else
+        PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    fi
+fi
 cd "$PROJECT_DIR"
 
-source .venv/bin/activate
+if [[ ! -f pyproject.toml || ! -f eval/eval.py ]]; then
+    echo "Project checkout not found at $PROJECT_DIR." >&2
+    echo "Submit from the repository root or set PROJECT_DIR explicitly." >&2
+    exit 1
+fi
+
+VENV_DIR="${VENV_DIR:-$HOME/msc_project/ml-rl-dllm/.venv}"
+if [[ ! -f "$VENV_DIR/bin/activate" ]]; then
+    echo "Virtual environment not found at $VENV_DIR." >&2
+    echo "Set VENV_DIR to the environment containing the eval dependencies." >&2
+    exit 1
+fi
+
+source "$VENV_DIR/bin/activate"
 export PYTHONNOUSERSITE=1
 
 export HF_TOKEN="${HF_TOKEN:-$(cat ~/.hf_token)}"
@@ -26,6 +45,30 @@ export TORCH_COMPILE_DISABLE=1
 if command -v module >/dev/null 2>&1; then
     module add cuda
 fi
+
+echo "===== SOURCE INFO ====="
+echo "project_dir: $PROJECT_DIR"
+echo "venv_dir: $VENV_DIR"
+echo "python: $(command -v python)"
+echo "git_commit: $(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
+echo "git_branch: $(git branch --show-current 2>/dev/null || echo unknown)"
+python - <<'PY'
+from pathlib import Path
+
+import eval.sampler as sampler_module
+from eval.sampler import CustomDistributedSampler
+
+sampler = CustomDistributedSampler(range(1), shuffle=False)
+if sampler.num_replicas != 1 or sampler.rank != 0:
+    raise RuntimeError(
+        "Sampler preflight expected a single replica with rank 0, "
+        f"got {sampler.num_replicas=} and {sampler.rank=}."
+    )
+
+print(f"sampler_source: {Path(sampler_module.__file__).resolve()}")
+print("sampler_single_process: ok")
+PY
+echo "======================="
 
 CONFIG_PATH="${CONFIG_PATH:-configs/experiment_configs/llada_8b_instruct_dit_confidence_BL256_mixture.yaml}"
 RUN_PATH="${RUN_PATH:-}"
