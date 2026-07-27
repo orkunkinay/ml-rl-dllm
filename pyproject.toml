@@ -30,6 +30,7 @@ dependencies = [
   "numpy>=1.26.0",
   "pandas",
   "s3fs",
+  "huggingface_hub",
   "matplotlib",
   "bitsandbytes==0.45.3; platform_system != 'Darwin'",
 ]

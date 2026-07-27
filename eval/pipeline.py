@@ -12,6 +12,8 @@ from pathlib import Path
 
 import s3fs
 import torch
+from huggingface_hub import HfApi
+from huggingface_hub import hf_hub_download
 from tqdm import tqdm
 
 from common.run_state import jsonl_is_nonempty_parseable
@@ -77,7 +79,7 @@ def download_checkpoint(
 
 
 def resolve_checkpoint_refs(ckpt_names: list[str], checkpoints: list[str]) -> list[str]:
-    if "first" not in checkpoints and "last" not in checkpoints:
+    if not any(c in ("first", "last", "all") for c in checkpoints):
         return checkpoints
 
     ckpt_nums = []
@@ -90,6 +92,7 @@ def resolve_checkpoint_refs(ckpt_names: list[str], checkpoints: list[str]) -> li
     assert ckpt_nums, "No checkpoints found"
     ckpt_nums.sort()
     first, last = str(ckpt_nums[0]), str(ckpt_nums[-1])
+    all_ckpts = [str(n) for n in ckpt_nums]
 
     resolved = []
     for ckpt in checkpoints:
@@ -97,10 +100,61 @@ def resolve_checkpoint_refs(ckpt_names: list[str], checkpoints: list[str]) -> li
             resolved.append(first)
         elif ckpt == "last":
             resolved.append(last)
+        elif ckpt == "all":
+            resolved.extend(all_ckpts)
         else:
             resolved.append(ckpt)
 
     return list(dict.fromkeys(resolved))
+
+
+def parse_hf_run_path(run_path: str) -> tuple[str, str]:
+    """Parse 'hf://<owner>/<repo>/<subpath>' into (repo_id, subpath)."""
+    assert run_path.startswith("hf://"), run_path
+    parts = run_path[len("hf://") :].split("/")
+    assert len(parts) >= 3, (
+        f"Expected hf://<owner>/<repo>/<subpath-to-checkpoints>, got {run_path}"
+    )
+    repo_id = "/".join(parts[:2])
+    subpath = "/".join(parts[2:])
+    return repo_id, subpath
+
+
+def list_hf_checkpoints(repo_id: str, subpath: str) -> list[str]:
+    files = HfApi().list_repo_files(repo_id)
+    prefix = f"{subpath}/checkpoint-"
+    names = set()
+    for f in files:
+        if f.startswith(prefix) and f.endswith("/model.safetensors"):
+            names.add(f[len(subpath) + 1 :].split("/")[0])
+    assert names, f"No checkpoints with model.safetensors found under {subpath!r} in {repo_id}"
+    return sorted(names)
+
+
+def download_checkpoint_hf(
+    repo_id: str, subpath: str, checkpoint: str, local_dir: Path
+):
+    if checkpoint.startswith("baseline-"):
+        ckpt_dir = local_dir / f"checkpoint-{checkpoint}"
+        ckpt_dir.mkdir(parents=True, exist_ok=True)
+        (ckpt_dir / ".baseline_marker").touch()
+        return
+
+    local_ckpt = local_dir / f"checkpoint-{checkpoint}"
+    target = local_ckpt / "model.safetensors"
+
+    if target.exists():
+        print(f"  Checkpoint {checkpoint} already downloaded")
+        return
+
+    print(f"  Downloading checkpoint-{checkpoint} from {repo_id}...")
+    local_ckpt.mkdir(parents=True, exist_ok=True)
+    downloaded = hf_hub_download(
+        repo_id=repo_id,
+        filename=f"{subpath}/checkpoint-{checkpoint}/model.safetensors",
+    )
+    shutil.copy(downloaded, target)
+    assert target.exists(), f"Download failed: {local_ckpt}"
 
 
 def run_eval(
@@ -215,8 +269,16 @@ def aggregate(save_path: str):
 
 
 def run_pipeline(cfg: EvalConfig) -> str:
-    run_name = Path(cfg.run_path).name
-    is_local = not cfg.run_path.startswith("s3://")
+    is_hf = cfg.run_path.startswith("hf://")
+    is_s3 = cfg.run_path.startswith("s3://")
+    is_local = not (is_hf or is_s3)
+
+    hf_repo_id = hf_subpath = None
+    if is_hf:
+        hf_repo_id, hf_subpath = parse_hf_run_path(cfg.run_path)
+        run_name = Path(hf_subpath).name
+    else:
+        run_name = Path(cfg.run_path).name
 
     if is_local:
         local_ckpt_dir = Path(cfg.run_path)
@@ -234,6 +296,8 @@ def run_pipeline(cfg: EvalConfig) -> str:
     if cfg.checkpoints and not run_name.startswith("baseline-"):
         if is_local:
             ckpt_names = [p.name for p in local_ckpt_dir.iterdir()]
+        elif is_hf:
+            ckpt_names = list_hf_checkpoints(hf_repo_id, hf_subpath)
         else:
             s3 = get_s3()
             ckpt_names = [
@@ -255,12 +319,18 @@ def run_pipeline(cfg: EvalConfig) -> str:
     print(f"Running {len(all_runs)} evaluations.")
 
     needed_ckpts = list(set(cfg.checkpoints))
-    if not run_name.startswith("baseline-") and not is_local:
-        s3 = get_s3()
-        print(f"Downloading: {needed_ckpts}")
-        local_ckpt_dir.mkdir(parents=True, exist_ok=True)
-        for ckpt in needed_ckpts:
-            download_checkpoint(s3, cfg.run_path, ckpt, local_ckpt_dir)
+    if not run_name.startswith("baseline-"):
+        if is_hf:
+            print(f"Downloading from {cfg.run_path}: {needed_ckpts}")
+            local_ckpt_dir.mkdir(parents=True, exist_ok=True)
+            for ckpt in needed_ckpts:
+                download_checkpoint_hf(hf_repo_id, hf_subpath, ckpt, local_ckpt_dir)
+        elif is_s3:
+            s3 = get_s3()
+            print(f"Downloading: {needed_ckpts}")
+            local_ckpt_dir.mkdir(parents=True, exist_ok=True)
+            for ckpt in needed_ckpts:
+                download_checkpoint(s3, cfg.run_path, ckpt, local_ckpt_dir)
 
     run_eval(run_name, cfg, local_ckpt_dir, all_runs)
     return run_name
@@ -268,7 +338,12 @@ def run_pipeline(cfg: EvalConfig) -> str:
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("run_paths")
+    parser.add_argument(
+        "run_paths",
+        help="Comma/semicolon-separated run paths: a local directory, an "
+        "s3://bucket/path, or hf://<owner>/<repo>/<subpath-to-checkpoints> "
+        "(e.g. hf://orkunkinay/ml-rl-dllm/checkpoints/trainer_output).",
+    )
     parser.add_argument("config_path")
     parser.add_argument("--datasets", default="gsm8k")
     parser.add_argument("--temperatures", default="1.0")
