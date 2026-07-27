@@ -5,7 +5,6 @@
 ### Adapted from https://github.com/dllm-reasoning/d1 (Apache 2.0)
 import argparse
 import json
-import math
 import os
 import random
 import re
@@ -18,12 +17,10 @@ from pathlib import Path
 import evaluate as hf_evaluate
 import numpy as np
 import torch
-import torch.distributed as dist
 from accelerate import Accelerator
 from accelerate.utils import gather_object
 from safetensors.torch import load_file
 from torch.utils.data import DataLoader
-from torch.utils.data import DistributedSampler
 from tqdm import tqdm
 from transformers import AutoModel
 from transformers import AutoTokenizer
@@ -49,6 +46,7 @@ from data.loaders.math500 import MATH500Dataset
 from data.loaders.mbpp import MBPPDataset
 from data.sanitize import sanitize_humaneval
 from data.sanitize import sanitize_mbpp
+from eval.sampler import CustomDistributedSampler
 
 os.environ["HF_ALLOW_CODE_EVAL"] = "1"
 
@@ -524,60 +522,6 @@ def generations_from_jsonl(path: str | Path) -> list[dict]:
         if raw is not None:
             generations.append(raw)
     return generations
-
-
-class CustomDistributedSampler(DistributedSampler):
-    """
-    From torch docs:
-    drop_last (bool, optional): if ``True``, then the sampler will drop the
-            tail of the data to make it evenly divisible across the number of
-            replicas. If ``False``, the sampler will add extra indices to make
-            the data evenly divisible across the replicas
-
-    We want drop_last = False, but don't want to have extra padding indices. Hence using a custom sampler.
-    """
-
-    def __init__(
-        self,
-        dataset,
-        num_replicas=None,
-        rank=None,
-        shuffle=True,
-        seed=0,
-        drop_last=False,
-    ) -> None:
-        if num_replicas is None:
-            if not dist.is_available():
-                raise RuntimeError("Requires distributed package to be available")
-            num_replicas = dist.get_world_size()
-        if rank is None:
-            if not dist.is_available():
-                raise RuntimeError("Requires distributed package to be available")
-            rank = dist.get_rank()
-        if rank >= num_replicas or rank < 0:
-            raise ValueError(
-                f"Invalid rank {rank}, rank should be in the interval [0, {num_replicas - 1}]"
-            )
-
-        self.dataset = dataset
-        self.num_replicas = num_replicas
-        self.rank = rank
-        self.epoch = 0
-        self.drop_last = drop_last
-
-        if self.drop_last and len(self.dataset) % self.num_replicas != 0:
-            self.num_samples = math.ceil(
-                (len(self.dataset) - self.num_replicas) / self.num_replicas
-            )
-            self.total_size = self.num_samples * self.num_replicas
-        else:
-            self.total_size = len(self.dataset)
-            self.num_samples = len(self.dataset) // self.num_replicas + int(
-                rank < (self.total_size % self.num_replicas)
-            )
-
-        self.shuffle = shuffle
-        self.seed = seed
 
 
 if __name__ == "__main__":
