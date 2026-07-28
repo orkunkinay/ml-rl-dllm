@@ -8,6 +8,7 @@ import glob
 import json
 import os
 import re
+from pathlib import Path
 
 import pandas as pd
 
@@ -15,6 +16,7 @@ from common.run_state import iter_jsonl
 from common.parsing.parse_and_get_acc import parse_code_answers
 from common.parsing.parse_and_get_acc import parse_gsm_answers
 from common.parsing.parse_and_get_acc import parse_math_answers
+from eval.dataset_metrics import xsum_metrics
 
 
 def parse_checkpoint_name(path) -> int | str:
@@ -50,7 +52,7 @@ def parse_temperature(path) -> float:
 
 def extract_dataset_name(json_file) -> str:
     filename = os.path.basename(json_file)
-    match = re.match(r"^(gsm8k|math|humaneval|mbpp)_", filename)
+    match = re.match(r"^(gsm8k|math|humaneval|mbpp|xsum)_", filename)
     if match:
         return match.group(1)
     return "unknown"
@@ -104,11 +106,16 @@ def aggregate_results(results_dir):
         os.path.join(glob.escape(results_dir), "**", "*_generations.json"),
         recursive=True,
     )
+    incremental_files = glob.glob(
+        os.path.join(glob.escape(results_dir), "**", "*_generations.jsonl"),
+        recursive=True,
+    )
+    # Completed evaluations have a JSONL checkpoint and a final JSON report.
+    # Prefer the final report so each evaluation is aggregated only once.
     evalpy_files.extend(
-        glob.glob(
-            os.path.join(glob.escape(results_dir), "**", "*_generations.jsonl"),
-            recursive=True,
-        )
+        path
+        for path in incremental_files
+        if not Path(path).with_suffix(".json").exists()
     )
 
     if len(evalpy_files) == 0:
@@ -132,7 +139,31 @@ def aggregate_results(results_dir):
 
             data = load_result_file(json_file)
 
-            if dataset_name in ["humaneval", "mbpp"]:
+            mbpp_metrics = data.get("mbpp_eval_results", {})
+            xsum_result_metrics = data.get("xsum_metrics", {})
+            if dataset_name == "xsum" and not xsum_result_metrics:
+                xsum_result_metrics = xsum_metrics(data.get("generations", []))
+            if dataset_name == "mbpp" and mbpp_metrics:
+                total_processed = mbpp_metrics.get("total", 0)
+                total_correct = round(
+                    mbpp_metrics.get("pass@1", 0.0) * total_processed
+                )
+                processed_items = []
+                total_effective_tokens = 0
+                steps = [item.get("steps", 0) for item in data.get("generations", [])]
+                wall_times = [
+                    item.get("wall_time", 0.0) for item in data.get("generations", [])
+                ]
+            elif dataset_name == "xsum":
+                total_processed = xsum_result_metrics.get("total", 0)
+                total_correct = 0
+                processed_items = []
+                total_effective_tokens = 0
+                steps = [item.get("steps", 0) for item in data.get("generations", [])]
+                wall_times = [
+                    item.get("wall_time", 0.0) for item in data.get("generations", [])
+                ]
+            elif dataset_name in ["humaneval", "mbpp"]:
                 (
                     total_correct,
                     total_processed,
@@ -173,6 +204,28 @@ def aggregate_results(results_dir):
                 f"\nProcessing: {run_name}, checkpoint {checkpoint_num}, seed {seed}, temp {temperature}, dataset {dataset_name}"
             )
             print(f"  Accuracy: {accuracy:.2f}%")
+            if dataset_name == "mbpp" and mbpp_metrics:
+                print(f"  pass@1: {mbpp_metrics['pass@1']:.4f}")
+                print(
+                    "  Execution failures: "
+                    f"syntax={mbpp_metrics['syntax_errors']}, "
+                    f"tests={mbpp_metrics['test_failures']}, "
+                    f"timeouts={mbpp_metrics['timeouts']}, "
+                    f"length_limit={mbpp_metrics['length_limit_failures']}"
+                )
+            elif dataset_name == "xsum":
+                print(
+                    "  ROUGE: "
+                    f"R-1={xsum_result_metrics['rouge1']:.4f}, "
+                    f"R-2={xsum_result_metrics['rouge2']:.4f}, "
+                    f"R-L={xsum_result_metrics['rougeL']:.4f}"
+                )
+                print(
+                    "  Output: "
+                    f"tokens={xsum_result_metrics['average_output_tokens']:.1f}, "
+                    f"words={xsum_result_metrics['average_output_words']:.1f}, "
+                    f"length_limit={xsum_result_metrics['length_limit_failures']}"
+                )
             if avg_steps > 0:
                 print(f"  Avg NFEs: {avg_steps:.1f}")
             if avg_wall_time > 0:
@@ -218,6 +271,24 @@ def aggregate_results(results_dir):
                 "expected_dataset_size": expected_size,
                 "actual_samples_processed": actual_size,
                 "test_set_complete": coverage_complete,
+                "pass_at_1": mbpp_metrics.get("pass@1"),
+                "syntax_errors": mbpp_metrics.get("syntax_errors"),
+                "test_failures": mbpp_metrics.get("test_failures"),
+                "timeouts": mbpp_metrics.get("timeouts"),
+                "length_limit_failures": (
+                    mbpp_metrics.get("length_limit_failures")
+                    if dataset_name == "mbpp"
+                    else xsum_result_metrics.get("length_limit_failures")
+                ),
+                "rouge1": xsum_result_metrics.get("rouge1"),
+                "rouge2": xsum_result_metrics.get("rouge2"),
+                "rougeL": xsum_result_metrics.get("rougeL"),
+                "average_output_tokens": xsum_result_metrics.get(
+                    "average_output_tokens"
+                ),
+                "average_output_words": xsum_result_metrics.get(
+                    "average_output_words"
+                ),
                 "json_file": json_file,
             }
 
