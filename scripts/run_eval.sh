@@ -1,4 +1,11 @@
 #!/usr/bin/env bash
+#SBATCH --job-name=llada_eval
+#SBATCH --partition=Teaching
+#SBATCH --output=logs/llada_eval_%j.out
+#SBATCH --error=logs/llada_eval_%j.err
+#SBATCH --time=48:00:00
+#SBATCH --mem=32G
+#SBATCH --gres=gpu:h200_3g.71gb:1
 #
 # For licensing see accompanying LICENSE file.
 # Copyright (C) 2026 Apple Inc. All Rights Reserved.
@@ -18,8 +25,15 @@ SAMPLING_MODE="bernoulli-argmax"
 SEEDS="42,43,44"
 RESULTS_ROOT="eval_results"
 VENV_DIR="${VENV_DIR:-$HOME/msc_project/ml-rl-dllm/.venv}"
+PROJECT_DIR="${PROJECT_DIR:-}"
 
-PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+if [[ -z "$PROJECT_DIR" ]]; then
+    if [[ -n "${SLURM_SUBMIT_DIR:-}" ]]; then
+        PROJECT_DIR="$SLURM_SUBMIT_DIR"
+    else
+        PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+    fi
+fi
 cd "$PROJECT_DIR"
 
 validate_datasets() {
@@ -55,6 +69,45 @@ export PYTHONNOUSERSITE=1
 export TORCHDYNAMO_DISABLE=1
 export TORCH_COMPILE_DISABLE=1
 
+if [[ -z "${HF_TOKEN:-}" ]]; then
+    if [[ ! -f "$HOME/.hf_token" ]]; then
+        echo "HF_TOKEN is unset and $HOME/.hf_token does not exist." >&2
+        exit 1
+    fi
+    export HF_TOKEN="$(<"$HOME/.hf_token")"
+fi
+if [[ -f "$HOME/.wandb_api_key" && -z "${WANDB_API_KEY:-}" ]]; then
+    export WANDB_API_KEY="$(<"$HOME/.wandb_api_key")"
+fi
+
+if command -v module >/dev/null 2>&1; then
+    module add cuda
+fi
+
+echo "===== SOURCE INFO ====="
+echo "project_dir: $PROJECT_DIR"
+echo "venv_dir: $VENV_DIR"
+echo "python: $(command -v python)"
+echo "git_commit: $(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
+echo "git_branch: $(git branch --show-current 2>/dev/null || echo unknown)"
+python - <<'PY'
+from pathlib import Path
+
+import eval.sampler as sampler_module
+from eval.sampler import CustomDistributedSampler
+
+sampler = CustomDistributedSampler(range(1), shuffle=False)
+if sampler.num_replicas != 1 or sampler.rank != 0:
+    raise RuntimeError(
+        "Sampler preflight expected a single replica with rank 0, "
+        f"got {sampler.num_replicas=} and {sampler.rank=}."
+    )
+
+print(f"sampler_source: {Path(sampler_module.__file__).resolve()}")
+print("sampler_single_process: ok")
+PY
+echo "======================="
+
 if [[ -z "$RUN_PATH" ]]; then
     RUN_PATH="$(
         python - <<'PY'
@@ -77,11 +130,28 @@ if [[ -z "$RUN_PATH" || ! -d "$RUN_PATH" ]]; then
     exit 1
 fi
 
-RESULTS_DIR="${RESULTS_ROOT}/$(date +%Y%m%d_%H%M%S)_${DATASETS//,/_}"
-if [[ -e "$RESULTS_DIR" ]]; then
+RUN_ID="${SLURM_JOB_ID:-$(date +%Y%m%d_%H%M%S)}"
+RESULTS_DIR="${RESULTS_ROOT}/${RUN_ID}_${DATASETS//,/_}"
+mkdir -p "$RESULTS_ROOT"
+if ! mkdir "$RESULTS_DIR"; then
     echo "Refusing to overwrite existing results directory: $RESULTS_DIR" >&2
     exit 1
 fi
+
+echo "===== NODE / GPU INFO ====="
+hostname
+nvidia-smi
+python - <<'PY'
+import torch
+
+print("CUDA available:", torch.cuda.is_available())
+if not torch.cuda.is_available():
+    raise RuntimeError("CUDA unavailable")
+props = torch.cuda.get_device_properties(0)
+print("GPU:", props.name)
+print("GPU memory GB:", props.total_memory / 1024**3)
+PY
+echo "==========================="
 
 echo "===== EVAL CONFIG ====="
 echo "run_path: $RUN_PATH"
