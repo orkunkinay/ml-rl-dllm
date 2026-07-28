@@ -285,12 +285,14 @@ def evaluate(
                 generated_texts = tokenizer.batch_decode(
                     out[:, -gen_length:], skip_special_tokens=True
                 )
-                generated_token_counts = [
-                    len(token_ids)
-                    for token_ids in tokenizer(
-                        generated_texts, add_special_tokens=False
-                    ).input_ids
-                ]
+                generated_token_counts = None
+                if dataset_name in {"mbpp", "xsum"}:
+                    generated_token_counts = [
+                        len(token_ids)
+                        for token_ids in tokenizer(
+                            generated_texts, add_special_tokens=False
+                        ).input_ids
+                    ]
 
                 batch_wall_time = time.time() - start_time
                 wall_time_per_sample = batch_wall_time / len(generated_texts)
