@@ -1,0 +1,3 @@
+run,dataset,block_length,checkpoint,temperature,accuracy_mean,accuracy_std,accuracy_min,accuracy_max,avg_steps_mean,avg_steps_std,avg_steps_min,avg_steps_max,avg_wall_time_mean,avg_wall_time_std,avg_wall_time_min,avg_wall_time_max,avg_effective_tokens_mean,avg_effective_tokens_std,avg_effective_tokens_min,avg_effective_tokens_max,num_seeds
+trainer_output,gsm8k,32,9200,1.0,60.3487,0.6823,59.6664,61.0311,176.8234,0.1039,176.7278,176.934,7.1614,0.0248,7.1364,7.186,163.236,0.9625,162.467,164.3154,3
+trainer_output,gsm8k,256,9200,1.0,60.3487,0.6823,59.6664,61.0311,176.8234,0.1039,176.7278,176.934,7.1614,0.0248,7.1364,7.186,163.236,0.9625,162.467,164.3154,3
