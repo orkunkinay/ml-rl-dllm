@@ -44,8 +44,11 @@ from data.loaders.gsm8k import GSM8KDataset
 from data.loaders.humaneval import HumanEvalDataset
 from data.loaders.math500 import MATH500Dataset
 from data.loaders.mbpp import MBPPDataset
+from data.loaders.xsum import XSumDataset
 from data.sanitize import sanitize_humaneval
 from data.sanitize import sanitize_mbpp
+from eval.dataset_metrics import evaluate_mbpp_generations
+from eval.dataset_metrics import xsum_metrics
 from eval.sampler import CustomDistributedSampler
 
 os.environ["HF_ALLOW_CODE_EVAL"] = "1"
@@ -55,16 +58,19 @@ DATASET_MAP = {
     "math": MATH500Dataset,
     "humaneval": HumanEvalDataset,
     "mbpp": MBPPDataset,
+    "xsum": XSumDataset,
 }
 
 
 MASK_TOKENS_MAP = {"LLaDA": 126336, "Dream": 151666}
+MAX_GENERATION_TOKENS = 256
 
 FEW_SHOT_DEFAULTS = {
     "gsm8k": 0,  # NOTE: Fast-dLLM uses 5
     "math": 0,  # NOTE: Fast-dLLM uses 4
     "humaneval": 0,
     "mbpp": 3,
+    "xsum": 0,
 }
 
 
@@ -151,6 +157,7 @@ def evaluate(
     device = model.device
 
     is_code_dataset = dataset_name in ["humaneval", "mbpp"]
+    is_xsum = dataset_name == "xsum"
     completed_sample_ids = set(completed_sample_ids or set())
     total_seen = len(completed_sample_ids)
     running_correct = 0
@@ -164,6 +171,8 @@ def evaluate(
             return str(batch["task_ids"][index])
         if dataset_name == "mbpp":
             return str(batch["task_ids"][index])
+        if dataset_name == "xsum":
+            return str(batch["sample_ids"][index])
         if "questions" in batch:
             return f"{dataset_name}:{batch['questions'][index]}"
         return f"{dataset_name}:batch_{batch_index}:item_{index}"
@@ -223,6 +232,10 @@ def evaluate(
                         task_ids = batch["task_ids"]
                         test_cases = batch["test_cases"]
                         entry_points = [None] * len(task_ids)
+                elif is_xsum:
+                    documents = batch["documents"]
+                    references = batch["summaries"]
+                    sample_ids = batch["sample_ids"]
                 else:
                     gt_answers = batch["answers"]
                     questions = batch["questions"]
@@ -272,6 +285,14 @@ def evaluate(
                 generated_texts = tokenizer.batch_decode(
                     out[:, -gen_length:], skip_special_tokens=True
                 )
+                generated_token_counts = None
+                if dataset_name in {"mbpp", "xsum"}:
+                    generated_token_counts = [
+                        len(token_ids)
+                        for token_ids in tokenizer(
+                            generated_texts, add_special_tokens=False
+                        ).input_ids
+                    ]
 
                 batch_wall_time = time.time() - start_time
                 wall_time_per_sample = batch_wall_time / len(generated_texts)
@@ -317,6 +338,24 @@ def evaluate(
                         }
                         for j in range(len(task_ids))
                     ]
+                elif is_xsum:
+                    example_result = [
+                        {
+                            "sample_id": sample_ids[j],
+                            "document": documents[j],
+                            "prompt_input": prompts[j],
+                            "generation": generated_texts[j],
+                            "reference": references[j],
+                            "generation_token_count": generated_token_counts[j],
+                            "length_limit_reached": generated_token_counts[j]
+                            >= gen_length,
+                            "steps": steps_taken[j].item()
+                            if hasattr(steps_taken[j], "item")
+                            else steps_taken[j],
+                            "wall_time": wall_time_per_sample,
+                        }
+                        for j in range(len(sample_ids))
+                    ]
                 else:
                     example_result = [
                         {
@@ -334,6 +373,13 @@ def evaluate(
                         for j in range(len(gt_answers))
                     ]
 
+                if dataset_name == "mbpp":
+                    for j, item in enumerate(example_result):
+                        item["generation_token_count"] = generated_token_counts[j]
+                        item["length_limit_reached"] = (
+                            generated_token_counts[j] >= gen_length
+                        )
+
                 all_generations.extend(example_result)
                 total_processed += len(generated_texts)
                 wall_times.append(batch_wall_time)
@@ -346,6 +392,11 @@ def evaluate(
                         prediction = item["generation_sanitized"]
                         answer = item["test_cases"]
                         prompt = item["prompt"]
+                        nfe = item["steps"]
+                    elif is_xsum:
+                        prediction = item["generation"]
+                        answer = item["reference"]
+                        prompt = item["prompt_input"]
                         nfe = item["steps"]
                     else:
                         prediction = item["generations"]
@@ -439,6 +490,13 @@ def evaluate(
                             print("Generation (sanitized):")
                             print(sanitized_completions[idx])
                             print("-" * 50)
+                    elif is_xsum:
+                        print(f"Document: {documents[idx]}")
+                        print("-" * 50)
+                        print("Generation:")
+                        print(generated_texts[idx])
+                        print("-" * 50)
+                        print(f"Reference: {references[idx]}")
                     else:
                         print(f"Question: {questions[idx]}")
                         print("-" * 50)
@@ -540,7 +598,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--dataset",
         type=str,
-        choices=["gsm8k", "math", "humaneval", "mbpp"],
+        choices=["gsm8k", "math", "humaneval", "mbpp", "xsum"],
         default="gsm8k",
     )
     parser.add_argument("--suffix", type=str, default="")
@@ -598,6 +656,11 @@ if __name__ == "__main__":
         args.block_length = grpo_config.block_length
     if args.gen_length is None:
         args.gen_length = grpo_config.max_completion_length
+    if args.gen_length > MAX_GENERATION_TOKENS:
+        raise ValueError(
+            f"gen_length must be at most {MAX_GENERATION_TOKENS} tokens, "
+            f"got {args.gen_length}."
+        )
     # Override model_path from config if not explicitly provided
     if args.model_path is None:
         args.model_path = grpo_config.model_path
@@ -761,11 +824,9 @@ if __name__ == "__main__":
         )
 
     # Create the dataset
-    dataset_kwargs = {
-        "tokenizer": tokenizer,
-        "subsample": -1,
-        "num_examples": args.few_shot,
-    }
+    dataset_kwargs = {"tokenizer": tokenizer, "subsample": -1}
+    if args.dataset != "xsum":
+        dataset_kwargs["num_examples"] = args.few_shot
     if args.dataset in ["gsm8k", "math"]:
         dataset_kwargs["add_reasoning"] = True
     dataset = DATASET_MAP[args.dataset](**dataset_kwargs)
@@ -840,10 +901,16 @@ if __name__ == "__main__":
         if not args.dont_save and output_jsonl.exists():
             results["generations"] = generations_from_jsonl(output_jsonl)
             results["total_processed"] = len(results["generations"])
-        if args.dataset in {"humaneval", "mbpp"}:
+        if args.dataset == "humaneval":
             results["code_eval_results"] = evaluate_code(
                 results["generations"], args.dataset
             )
+        elif args.dataset == "mbpp":
+            results["mbpp_eval_results"] = evaluate_mbpp_generations(
+                results["generations"]
+            )
+        elif args.dataset == "xsum":
+            results["xsum_metrics"] = xsum_metrics(results["generations"])
         results["metrics"] = {
             k: results.pop(k) for k in ("wall_time", "total_processed")
         }

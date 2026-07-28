@@ -18,6 +18,26 @@ from common.run_state import jsonl_is_nonempty_parseable
 from common.run_state import read_json
 
 
+SUPPORTED_DATASETS = ("gsm8k", "math", "humaneval", "mbpp", "xsum")
+
+
+def parse_dataset_selection(value: str) -> list[str]:
+    """Parse a comma-separated dataset selection without silently accepting typos."""
+
+    datasets = [dataset.strip() for dataset in value.split(",") if dataset.strip()]
+    if datasets == ["all"]:
+        return list(SUPPORTED_DATASETS)
+    if not datasets:
+        raise ValueError("At least one dataset must be selected.")
+    unknown = sorted(set(datasets) - set(SUPPORTED_DATASETS))
+    if unknown:
+        supported = ", ".join(SUPPORTED_DATASETS)
+        raise ValueError(
+            f"Unknown dataset(s): {', '.join(unknown)}. Supported datasets: {supported}."
+        )
+    return list(dict.fromkeys(datasets))
+
+
 @dataclass
 class EvalConfig:
     run_path: str
@@ -293,9 +313,10 @@ def main():
         if ";" in args.run_paths
         else args.run_paths.split(",")
     )
-    datasets = args.datasets.split(",")
-    if datasets == ["all"]:
-        datasets = ["gsm8k", "math", "humaneval", "mbpp"]
+    try:
+        datasets = parse_dataset_selection(args.datasets)
+    except ValueError as exc:
+        parser.error(str(exc))
 
     print(f"Evaluating {len(run_paths)} run(s)")
 
