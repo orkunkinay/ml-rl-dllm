@@ -5,7 +5,7 @@
 #SBATCH --error=logs/llada_eval_trainer_output_hf_%j.err
 #SBATCH --time=48:00:00
 #SBATCH --mem=32G
-#SBATCH --gres=gpu:h200_3g.71gb:1
+#SBATCH --gres=gpu:h200_1g.18gb:1
 
 set -euo pipefail
 
