@@ -157,6 +157,46 @@ def download_checkpoint_hf(
     assert target.exists(), f"Download failed: {local_ckpt}"
 
 
+def eval_output_dir(
+    save_path: str,
+    run_name: str,
+    sampling_mode: str | None,
+    ckpt: str,
+    dataset: str,
+    seed: int,
+    temp: float,
+) -> Path:
+    output_dir = (
+        Path(save_path)
+        / run_name
+        / f"checkpoint-{ckpt}_seed_{seed}_temp_policy_{temp}"
+    )
+    if sampling_mode:
+        output_dir = Path(f"{output_dir}_sampling_mode_{sampling_mode}")
+    return output_dir
+
+
+def eval_is_complete(output_dir: Path) -> bool:
+    """Whether a prior run already produced a complete result set for this eval.
+
+    Used to make the pipeline resumable: reruns can skip already-finished
+    (checkpoint, dataset, seed, temperature) combinations and only download
+    and evaluate newly-added checkpoints.
+    """
+    if not output_dir.exists():
+        return False
+    progress = read_json(output_dir / "progress.json", default={}) or {}
+    if progress.get("status") != "completed":
+        return False
+    has_final_json = any(
+        p.stat().st_size > 0 for p in output_dir.glob("*_generations.json")
+    )
+    has_jsonl = any(
+        jsonl_is_nonempty_parseable(p) for p in output_dir.glob("*_generations.jsonl")
+    )
+    return has_final_json or has_jsonl
+
+
 def run_eval(
     run_name: str,
     cfg: EvalConfig,
@@ -176,27 +216,11 @@ def run_eval(
                 print(f"  Skipping {ckpt}: policy not found")
                 continue
 
-        output_dir = (
-            Path(cfg.save_path)
-            / run_name
-            / f"checkpoint-{ckpt}_seed_{seed}_temp_policy_{temp}"
+        output_dir = eval_output_dir(
+            cfg.save_path, run_name, cfg.sampling_mode, ckpt, dataset, seed, temp
         )
-        if cfg.sampling_mode:
-            output_dir = Path(f"{output_dir}_sampling_mode_{cfg.sampling_mode}")
         output_dir.mkdir(parents=True, exist_ok=True)
-        progress = read_json(output_dir / "progress.json", default={}) or {}
-        has_final_json = any(
-            p.stat().st_size > 0 for p in output_dir.glob("*_generations.json")
-        )
-        has_jsonl = any(
-            jsonl_is_nonempty_parseable(p)
-            for p in output_dir.glob("*_generations.jsonl")
-        )
-        if (
-            cfg.resume == "auto"
-            and progress.get("status") == "completed"
-            and (has_final_json or has_jsonl)
-        ):
+        if cfg.resume == "auto" and eval_is_complete(output_dir):
             print(
                 f"  Skipping completed eval: {ckpt} seed={seed} temp={temp} {dataset}"
             )
@@ -316,9 +340,29 @@ def run_pipeline(cfg: EvalConfig) -> str:
         for temp in cfg.temperatures
     ]
 
-    print(f"Running {len(all_runs)} evaluations.")
+    if cfg.resume == "auto":
+        pending_runs = [
+            (ckpt, ds, seed, temp)
+            for ckpt, ds, seed, temp in all_runs
+            if not eval_is_complete(
+                eval_output_dir(
+                    cfg.save_path, run_name, cfg.sampling_mode, ckpt, ds, seed, temp
+                )
+            )
+        ]
+    else:
+        pending_runs = all_runs
 
-    needed_ckpts = list(set(cfg.checkpoints))
+    num_skipped = len(all_runs) - len(pending_runs)
+    print(
+        f"Running {len(pending_runs)} evaluations"
+        + (f" ({num_skipped} already complete, skipped)." if num_skipped else ".")
+    )
+
+    # Only fetch checkpoints that still have pending work: reruns after new
+    # checkpoints land upstream don't need to re-download ones already fully
+    # evaluated in a previous pass.
+    needed_ckpts = list({ckpt for ckpt, _, _, _ in pending_runs})
     if not run_name.startswith("baseline-"):
         if is_hf:
             print(f"Downloading from {cfg.run_path}: {needed_ckpts}")
@@ -332,7 +376,7 @@ def run_pipeline(cfg: EvalConfig) -> str:
             for ckpt in needed_ckpts:
                 download_checkpoint(s3, cfg.run_path, ckpt, local_ckpt_dir)
 
-    run_eval(run_name, cfg, local_ckpt_dir, all_runs)
+    run_eval(run_name, cfg, local_ckpt_dir, pending_runs)
     return run_name
 
 

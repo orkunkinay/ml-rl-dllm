@@ -61,6 +61,13 @@ HF_SUBPATH="${HF_SUBPATH:-checkpoints/trainer_output}"
 RUN_PATH="${RUN_PATH:-hf://${HF_REPO}/${HF_SUBPATH}}"
 
 CONFIG_PATH="${CONFIG_PATH:-configs/experiment_configs/llada_8b_instruct_dit_confidence_BL256_trainer_output.yaml}"
+# Keep SAVE_PATH the same across reruns of this script: it doubles as the
+# resume marker. On each run, eval.pipeline re-lists checkpoints on the Hub,
+# skips (checkpoint, dataset, seed, temperature) combos that already have a
+# completed result under SAVE_PATH, and only downloads + evaluates whatever
+# is new (e.g. checkpoints pushed by training since the last run). The final
+# aggregation step re-scans all of SAVE_PATH, so detailed_results.csv and
+# summary_statistics.csv always end up with old + new results combined.
 SAVE_PATH="${SAVE_PATH:-eval_results/trainer_output_hf}"
 # "all" evaluates every checkpoint found under $HF_SUBPATH; can be overridden
 # to a comma-separated list, e.g. CHECKPOINTS=500,5000,11500 or CHECKPOINTS=last
@@ -70,6 +77,9 @@ TEMPERATURES="${TEMPERATURES:-1.0}"
 SAMPLING_MODE="${SAMPLING_MODE:-bernoulli-argmax}"
 # Single seed, as requested -- override with SEEDS=42,43,44 for multi-seed runs.
 SEEDS="${SEEDS:-42}"
+# "auto" skips already-completed evals (the resume/append behavior above);
+# set RESUME= (empty) to force a full from-scratch re-evaluation instead.
+RESUME="${RESUME:-auto}"
 
 echo "===== NODE / GPU INFO ====="
 hostname
@@ -85,6 +95,7 @@ echo "datasets: $DATASETS"
 echo "temperatures: $TEMPERATURES"
 echo "sampling_mode: $SAMPLING_MODE"
 echo "seeds: $SEEDS"
+echo "resume: $RESUME"
 echo "======================="
 
 python - <<'PY'
@@ -105,6 +116,7 @@ python -m eval.pipeline "$RUN_PATH" "$CONFIG_PATH" \
     --sampling_mode "$SAMPLING_MODE" \
     --seeds "$SEEDS" \
     --save_path "$SAVE_PATH" \
+    --resume "$RESUME" \
     --log_memory \
     --memory_log_interval 50 \
     --reset_memory_peak_each_log
