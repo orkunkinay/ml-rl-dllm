@@ -4,6 +4,7 @@
 #
 import numpy as np
 import torch
+from datasets import load_dataset
 from datasets import load_from_disk
 
 from data.loaders.gsm8k import DATASETS_PATH
@@ -35,10 +36,17 @@ class MBPPDataset(torch.utils.data.Dataset):
         return len(self.subsample)
 
     def load_test_dataset(self):
-        self.dataset = load_from_disk(f"{DATASETS_PATH}/mbpp")["test"]
+        local_path = DATASETS_PATH / "mbpp"
+        if local_path.exists():
+            self.dataset_splits = load_from_disk(str(local_path))
+        else:
+            self.dataset_splits = load_dataset(
+                "google-research-datasets/mbpp", "full"
+            )
+        self.dataset = self.dataset_splits["test"]
 
     def load_few_shot_examples(self):
-        prompt_data = load_from_disk(f"{DATASETS_PATH}/mbpp")["prompt"]
+        prompt_data = self.dataset_splits["prompt"]
         n_examples = min(self.num_examples, len(prompt_data))
         return [prompt_data[i] for i in range(n_examples)]
 
