@@ -16,6 +16,7 @@ set -euo pipefail
 # Evaluation configuration. Edit DATASETS to select the benchmarks to run.
 # Supported: gsm8k, mbpp, xsum
 DATASETS="gsm8k"
+N_TEST="${N_TEST:-1000}"
 MAX_NEW_TOKENS=256
 CONFIG_PATH="configs/experiment_configs/llada_8b_instruct_dit_confidence_BL256_mixture.yaml"
 RUN_PATH=""
@@ -156,6 +157,7 @@ echo "==========================="
 echo "===== EVAL CONFIG ====="
 echo "run_path: $RUN_PATH"
 echo "datasets: $DATASETS"
+echo "n_test: $N_TEST"
 echo "max_new_tokens: $MAX_NEW_TOKENS"
 echo "results_dir: $RESULTS_DIR"
 echo "======================="
@@ -163,6 +165,7 @@ echo "======================="
 python -m eval.pipeline "$RUN_PATH" "$CONFIG_PATH" \
     --checkpoints "$CHECKPOINTS" \
     --datasets "$DATASETS" \
+    --n_test "$N_TEST" \
     --temperatures "$TEMPERATURES" \
     --sampling_mode "$SAMPLING_MODE" \
     --seeds "$SEEDS" \
