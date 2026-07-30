@@ -1,0 +1,17 @@
+{
+  "alpha": 0.0,
+  "completed_fraction": 1.0,
+  "dataset": "gsm8k",
+  "epoch": null,
+  "global_step": 1000,
+  "last_checkpoint": "eval_results/3574150_gsm8k/trainer_output/checkpoint-9200_seed_42_temp_policy_1.0_sampling_mode_bernoulli-argmax/gsm8k_instruct_256_0_256_policy_0_generations.jsonl",
+  "latest_metrics": {
+    "total_processed": 1000,
+    "wall_time": 28.977983174800872
+  },
+  "sampler": "policy",
+  "seed": 42,
+  "status": "completed",
+  "total_steps": 1000,
+  "updated_at": "2026-07-30T01:38:07.964705+00:00"
+}

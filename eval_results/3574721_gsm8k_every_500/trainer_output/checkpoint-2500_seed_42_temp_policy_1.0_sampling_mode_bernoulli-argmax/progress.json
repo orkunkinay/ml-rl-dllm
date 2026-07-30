@@ -1,0 +1,17 @@
+{
+  "alpha": 0.0,
+  "completed_fraction": 0.211,
+  "dataset": "gsm8k",
+  "epoch": null,
+  "global_step": 211,
+  "last_checkpoint": null,
+  "latest_metrics": {
+    "correct": 99,
+    "mean_nfe": 71.52132701421802
+  },
+  "sampler": "policy",
+  "seed": 42,
+  "status": "running",
+  "total_steps": 1000,
+  "updated_at": "2026-07-30T23:45:24.521856+00:00"
+}
