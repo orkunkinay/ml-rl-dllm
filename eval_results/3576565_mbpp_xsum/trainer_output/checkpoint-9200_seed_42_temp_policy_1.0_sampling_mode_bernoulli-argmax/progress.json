@@ -1,0 +1,17 @@
+{
+  "alpha": 0.0,
+  "completed_fraction": 0.002,
+  "dataset": "mbpp",
+  "epoch": null,
+  "global_step": 1,
+  "last_checkpoint": null,
+  "latest_metrics": {
+    "correct": 0,
+    "mean_nfe": 158.0
+  },
+  "sampler": "policy",
+  "seed": 42,
+  "status": "running",
+  "total_steps": 500,
+  "updated_at": "2026-07-31T00:07:25.799735+00:00"
+}

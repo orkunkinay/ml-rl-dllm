@@ -1,0 +1,17 @@
+{
+  "alpha": 0.0,
+  "completed_fraction": 1.0,
+  "dataset": "mbpp",
+  "epoch": null,
+  "global_step": 500,
+  "last_checkpoint": "eval_results/3576657_mbpp_xsum/trainer_output/checkpoint-9200_seed_42_temp_policy_1.0_sampling_mode_bernoulli-argmax/mbpp_instruct_fs3_256_0_256_policy_0_generations.jsonl",
+  "latest_metrics": {
+    "total_processed": 500,
+    "wall_time": 11.333757774829865
+  },
+  "sampler": "policy",
+  "seed": 42,
+  "status": "completed",
+  "total_steps": 500,
+  "updated_at": "2026-07-31T04:39:46.970169+00:00"
+}

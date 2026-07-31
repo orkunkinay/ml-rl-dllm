@@ -1,0 +1,2 @@
+run,dataset,block_length,checkpoint,temperature,accuracy_mean,accuracy_std,accuracy_min,accuracy_max,avg_steps_mean,avg_steps_std,avg_steps_min,avg_steps_max,avg_wall_time_mean,avg_wall_time_std,avg_wall_time_min,avg_wall_time_max,num_seeds
+trainer_output,mbpp,256,9200,1.0,30.7333,2.248,28.8,33.2,141.976,0.926,141.352,143.04,11.2758,0.0737,11.1929,11.3338,3
